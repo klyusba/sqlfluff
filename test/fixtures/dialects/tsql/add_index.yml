@@ -3,42 +3,44 @@
 # computed by SQLFluff when running the tests. Please run
 # `python test/generate_parse_fixture_yml.py`  to generate them after adding or
 # altering SQL files.
-_hash: 946e3a5e8e4f7e1d198b83d4b45999c073f327845770ec527b2d2131afc5cfc7
+_hash: 6821119f74906acf8daf9b047a299912a156b23e654f1a5f34f38981f9287f0b
 file:
 - batch:
     statement:
       if_then_statement:
-        keyword: IF
-        expression:
-        - keyword: NOT
-        - keyword: EXISTS
-        - bracketed:
-            start_bracket: (
-            expression:
-              select_statement:
-                select_clause:
-                  keyword: SELECT
-                  select_clause_element:
-                    wildcard_expression:
-                      wildcard_identifier:
-                        star: '*'
-                from_clause:
-                  keyword: FROM
-                  from_expression:
-                    from_expression_element:
-                      table_expression:
-                        table_reference:
-                        - identifier: sys
-                        - dot: .
-                        - identifier: indexes
-                where_clause:
-                  keyword: WHERE
-                  expression:
-                    column_reference:
-                      identifier: NAME
-                    comparison_operator: '='
-                    literal: "'IX_INTER_VIMR_INFECTIOUS_PEOPLE'"
-            end_bracket: )
+        if_clause:
+          keyword: IF
+          expression:
+          - keyword: NOT
+          - keyword: EXISTS
+          - bracketed:
+              start_bracket: (
+              expression:
+                select_statement:
+                  select_clause:
+                    keyword: SELECT
+                    select_clause_element:
+                      wildcard_expression:
+                        wildcard_identifier:
+                          star: '*'
+                  from_clause:
+                    keyword: FROM
+                    from_expression:
+                      from_expression_element:
+                        table_expression:
+                          table_reference:
+                          - identifier: sys
+                          - dot: .
+                          - identifier: indexes
+                  where_clause:
+                    keyword: WHERE
+                    expression:
+                      column_reference:
+                        identifier: NAME
+                      comparison_operator:
+                        raw_comparison_operator: '='
+                      literal: "'IX_INTER_VIMR_INFECTIOUS_PEOPLE'"
+              end_bracket: )
         statement:
           create_index_statement:
           - keyword: CREATE
@@ -51,48 +53,51 @@ file:
             - identifier: dbo
             - dot: .
             - identifier: VIMR_INFECTIOUS_PEOPLE
-          - bracketed:
-              start_bracket: (
-              index_column_definition:
-                identifier: DATE_LAST_INSERTED
-              end_bracket: )
+          - bracketed_index_column_list_grammar:
+              bracketed:
+                start_bracket: (
+                index_column_definition:
+                  identifier: DATE_LAST_INSERTED
+                end_bracket: )
           - statement_terminator: ;
 - go_statement:
     keyword: GO
 - batch:
     statement:
       if_then_statement:
-        keyword: IF
-        expression:
-        - keyword: NOT
-        - keyword: EXISTS
-        - bracketed:
-            start_bracket: (
-            expression:
-              select_statement:
-                select_clause:
-                  keyword: SELECT
-                  select_clause_element:
-                    wildcard_expression:
-                      wildcard_identifier:
-                        star: '*'
-                from_clause:
-                  keyword: FROM
-                  from_expression:
-                    from_expression_element:
-                      table_expression:
-                        table_reference:
-                        - identifier: sys
-                        - dot: .
-                        - identifier: indexes
-                where_clause:
-                  keyword: WHERE
-                  expression:
-                    column_reference:
-                      identifier: NAME
-                    comparison_operator: '='
-                    literal: "'IX_INTER_FOUNDATION_NICE_IC_INTAKE_COUNT'"
-            end_bracket: )
+        if_clause:
+          keyword: IF
+          expression:
+          - keyword: NOT
+          - keyword: EXISTS
+          - bracketed:
+              start_bracket: (
+              expression:
+                select_statement:
+                  select_clause:
+                    keyword: SELECT
+                    select_clause_element:
+                      wildcard_expression:
+                        wildcard_identifier:
+                          star: '*'
+                  from_clause:
+                    keyword: FROM
+                    from_expression:
+                      from_expression_element:
+                        table_expression:
+                          table_reference:
+                          - identifier: sys
+                          - dot: .
+                          - identifier: indexes
+                  where_clause:
+                    keyword: WHERE
+                    expression:
+                      column_reference:
+                        identifier: NAME
+                      comparison_operator:
+                        raw_comparison_operator: '='
+                      literal: "'IX_INTER_FOUNDATION_NICE_IC_INTAKE_COUNT'"
+              end_bracket: )
         statement:
           create_index_statement:
           - keyword: CREATE
@@ -105,47 +110,50 @@ file:
             - identifier: dbo
             - dot: .
             - identifier: FOUNDATION_NICE_IC_INTAKE_COUNT
-          - bracketed:
-              start_bracket: (
-              index_column_definition:
-                identifier: DATE_LAST_INSERTED
-              end_bracket: )
+          - bracketed_index_column_list_grammar:
+              bracketed:
+                start_bracket: (
+                index_column_definition:
+                  identifier: DATE_LAST_INSERTED
+                end_bracket: )
           - statement_terminator: ;
 - go_statement:
     keyword: GO
 - batch:
     statement:
       if_then_statement:
-        keyword: IF
-        expression:
-          keyword: EXISTS
-          bracketed:
-            start_bracket: (
-            expression:
-              select_statement:
-                select_clause:
-                  keyword: SELECT
-                  select_clause_element:
-                    wildcard_expression:
-                      wildcard_identifier:
-                        star: '*'
-                from_clause:
-                  keyword: FROM
-                  from_expression:
-                    from_expression_element:
-                      table_expression:
-                        table_reference:
-                        - identifier: sys
-                        - dot: .
-                        - identifier: indexes
-                where_clause:
-                  keyword: WHERE
-                  expression:
-                    column_reference:
-                      identifier: NAME
-                    comparison_operator: '='
-                    literal: "'IX_INTER_VIMR_REPRODUCTION_NUMBER'"
-            end_bracket: )
+        if_clause:
+          keyword: IF
+          expression:
+            keyword: EXISTS
+            bracketed:
+              start_bracket: (
+              expression:
+                select_statement:
+                  select_clause:
+                    keyword: SELECT
+                    select_clause_element:
+                      wildcard_expression:
+                        wildcard_identifier:
+                          star: '*'
+                  from_clause:
+                    keyword: FROM
+                    from_expression:
+                      from_expression_element:
+                        table_expression:
+                          table_reference:
+                          - identifier: sys
+                          - dot: .
+                          - identifier: indexes
+                  where_clause:
+                    keyword: WHERE
+                    expression:
+                      column_reference:
+                        identifier: NAME
+                      comparison_operator:
+                        raw_comparison_operator: '='
+                      literal: "'IX_INTER_VIMR_REPRODUCTION_NUMBER'"
+              end_bracket: )
         statement:
           create_index_statement:
           - keyword: CREATE
@@ -158,12 +166,264 @@ file:
             - identifier: dbo
             - dot: .
             - identifier: VIMR_INFECTIOUS_PEOPLE
+          - bracketed_index_column_list_grammar:
+              bracketed:
+                start_bracket: (
+                index_column_definition:
+                  identifier: DATE_LAST_INSERTED
+                end_bracket: )
+          - statement_terminator: ;
+- go_statement:
+    keyword: GO
+- batch:
+    statement:
+      create_index_statement:
+      - keyword: CREATE
+      - keyword: NONCLUSTERED
+      - keyword: INDEX
+      - index_reference:
+          identifier: '[ind_1]'
+      - keyword: 'ON'
+      - table_reference:
+        - identifier: '[schema1]'
+        - dot: .
+        - identifier: '[table1]'
+      - bracketed_index_column_list_grammar:
+          bracketed:
+            start_bracket: (
+            index_column_definition:
+              identifier: '[column1]'
+              keyword: ASC
+            end_bracket: )
+      - keyword: INCLUDE
+      - bracketed:
+          start_bracket: (
+          column_reference:
+            identifier: '[column2]'
+          end_bracket: )
+      - where_clause:
+          keyword: WHERE
+          bracketed:
+            start_bracket: (
+            expression:
+            - column_reference:
+                identifier: '[column3]'
+            - keyword: IS
+            - keyword: 'NULL'
+            end_bracket: )
+      - statement_terminator: ;
+- go_statement:
+    keyword: GO
+- batch:
+    statement:
+      create_index_statement:
+      - keyword: CREATE
+      - keyword: NONCLUSTERED
+      - keyword: INDEX
+      - index_reference:
+          identifier: '[NI_name]'
+      - keyword: 'ON'
+      - table_reference:
+        - identifier: '[schema1]'
+        - dot: .
+        - identifier: '[table1]'
+      - bracketed_index_column_list_grammar:
+          bracketed:
+            start_bracket: (
+            index_column_definition:
+              identifier: '[column1]'
+              keyword: DESC
+            end_bracket: )
+      - on_partition_or_filegroup_statement:
+          filegroup_clause:
+            keyword: 'ON'
+            filegroup_name:
+              identifier: '[PRIMARY]'
+      - statement_terminator: ;
+- go_statement:
+    keyword: GO
+- batch:
+    statement:
+      create_index_statement:
+      - keyword: CREATE
+      - keyword: UNIQUE
+      - keyword: INDEX
+      - index_reference:
+          identifier: '[ix_name]'
+      - keyword: 'ON'
+      - table_reference:
+        - identifier: '[schema1]'
+        - dot: .
+        - identifier: '[table1]'
+      - bracketed_index_column_list_grammar:
+          bracketed:
+          - start_bracket: (
+          - index_column_definition:
+              identifier: '[column1]'
+          - comma: ','
+          - index_column_definition:
+              identifier: '[column2]'
+          - end_bracket: )
+      - relational_index_options:
+        - keyword: WITH
+        - keyword: FILLFACTOR
+        - comparison_operator:
+            raw_comparison_operator: '='
+        - literal: '80'
+      - statement_terminator: ;
+- go_statement:
+    keyword: GO
+- batch:
+  - statement:
+      create_index_statement:
+      - keyword: CREATE
+      - keyword: UNIQUE
+      - keyword: INDEX
+      - index_reference:
+          identifier: '[ix_name]'
+      - keyword: 'ON'
+      - table_reference:
+        - identifier: '[schema1]'
+        - dot: .
+        - identifier: '[table1]'
+      - bracketed_index_column_list_grammar:
+          bracketed:
+            start_bracket: (
+            index_column_definition:
+              identifier: '[column1]'
+            end_bracket: )
+      - relational_index_options:
+          keyword: WITH
+          bracketed:
+          - start_bracket: (
+          - keyword: PAD_INDEX
+          - comparison_operator:
+              raw_comparison_operator: '='
+          - keyword: 'OFF'
+          - comma: ','
+          - keyword: SORT_IN_TEMPDB
+          - comparison_operator:
+              raw_comparison_operator: '='
+          - keyword: 'ON'
+          - end_bracket: )
+      - statement_terminator: ;
+  - statement:
+      create_index_statement:
+      - keyword: CREATE
+      - keyword: UNIQUE
+      - keyword: INDEX
+      - index_reference:
+          identifier: '[ix_name]'
+      - keyword: 'ON'
+      - table_reference:
+        - identifier: '[schema1]'
+        - dot: .
+        - identifier: '[table1]'
+      - bracketed_index_column_list_grammar:
+          bracketed:
+            start_bracket: (
+            index_column_definition:
+              identifier: '[column1]'
+            end_bracket: )
+      - relational_index_options:
+          keyword: WITH
+          bracketed:
+          - start_bracket: (
+          - keyword: ONLINE
+          - comparison_operator:
+              raw_comparison_operator: '='
+          - keyword: 'ON'
+          - end_bracket: )
+      - statement_terminator: ;
+- go_statement:
+    keyword: GO
+- batch:
+    statement:
+      create_index_statement:
+      - keyword: CREATE
+      - keyword: UNIQUE
+      - keyword: INDEX
+      - index_reference:
+          identifier: '[ix_name]'
+      - keyword: 'ON'
+      - table_reference:
+        - identifier: '[schema1]'
+        - dot: .
+        - identifier: '[table1]'
+      - bracketed_index_column_list_grammar:
+          bracketed:
+            start_bracket: (
+            index_column_definition:
+              identifier: '[column1]'
+            end_bracket: )
+      - relational_index_options:
+          keyword: WITH
+          bracketed:
+          - start_bracket: (
+          - keyword: ONLINE
+          - comparison_operator:
+              raw_comparison_operator: '='
+          - keyword: 'ON'
           - bracketed:
               start_bracket: (
-              index_column_definition:
-                identifier: DATE_LAST_INSERTED
+              keyword: WAIT_AT_LOW_PRIORITY
+              bracketed:
+              - start_bracket: (
+              - max_duration:
+                - keyword: MAX_DURATION
+                - comparison_operator:
+                    raw_comparison_operator: '='
+                - literal: '5'
+                - keyword: MINUTES
+              - comma: ','
+              - keyword: ABORT_AFTER_WAIT
+              - comparison_operator:
+                  raw_comparison_operator: '='
+              - keyword: NONE
+              - end_bracket: )
               end_bracket: )
-          - statement_terminator: ;
+          - end_bracket: )
+      - statement_terminator: ;
+- go_statement:
+    keyword: GO
+- batch:
+    statement:
+      create_index_statement:
+      - keyword: CREATE
+      - keyword: UNIQUE
+      - keyword: INDEX
+      - index_reference:
+          identifier: '[ix_name]'
+      - keyword: 'ON'
+      - table_reference:
+        - identifier: '[schema1]'
+        - dot: .
+        - identifier: '[table1]'
+      - bracketed_index_column_list_grammar:
+          bracketed:
+            start_bracket: (
+            index_column_definition:
+              identifier: '[column1]'
+            end_bracket: )
+      - relational_index_options:
+        - keyword: WITH
+        - keyword: DATA_COMPRESSION
+        - comparison_operator:
+            raw_comparison_operator: '='
+        - keyword: ROW
+        - on_partitions_clause:
+          - keyword: 'ON'
+          - keyword: PARTITIONS
+          - bracketed:
+            - start_bracket: (
+            - literal: '2'
+            - comma: ','
+            - literal: '4'
+            - comma: ','
+            - literal: '6'
+            - keyword: TO
+            - literal: '8'
+            - end_bracket: )
 - go_statement:
     keyword: GO
 - batch:
@@ -178,17 +438,18 @@ file:
         - identifier: '[Reporting]'
         - dot: .
         - identifier: '[Population]'
-      - bracketed:
-        - start_bracket: (
-        - index_column_definition:
-            identifier: '[ID]'
-        - comma: ','
-        - index_column_definition:
-            identifier: '[Facility]'
-        - comma: ','
-        - index_column_definition:
-            identifier: '[Population]'
-        - end_bracket: )
+      - bracketed_index_column_list_grammar:
+          bracketed:
+          - start_bracket: (
+          - index_column_definition:
+              identifier: '[ID]'
+          - comma: ','
+          - index_column_definition:
+              identifier: '[Facility]'
+          - comma: ','
+          - index_column_definition:
+              identifier: '[Population]'
+          - end_bracket: )
 - go_statement:
     keyword: GO
 - batch:

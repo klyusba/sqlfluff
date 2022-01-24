@@ -2,6 +2,10 @@
 
 from typing import Tuple, List
 
+from tqdm import tqdm
+
+from sqlfluff.core.config import progress_bar_configuration
+from sqlfluff.core.parser import NewlineSegment
 from sqlfluff.core.parser.grammar import Ref
 from sqlfluff.core.parser.segments import BaseSegment, allow_ephemeral
 from sqlfluff.core.parser.helpers import trim_non_code_segments
@@ -42,7 +46,9 @@ class Delimited(OneOf):
     @match_wrapper()
     @allow_ephemeral
     def match(
-        self, segments: Tuple[BaseSegment, ...], parse_context: ParseContext
+        self,
+        segments: Tuple[BaseSegment, ...],
+        parse_context: ParseContext,
     ) -> MatchResult:
         """Match an arbitrary number of elements separated by a delimiter.
 
@@ -59,6 +65,24 @@ class Delimited(OneOf):
         # delimiters is a list of tuples containing delimiter segments as we find them.
         delimiters: List[BaseSegment] = []
 
+        # We want to render progress bar only for the main matching loop,
+        # so disable it when in deeper parsing.
+        disable_progress_bar = (
+            parse_context.parse_depth > 0
+            or progress_bar_configuration.disable_progress_bar
+        )
+
+        # We use amount of `NewLineSegment` to estimate how many steps could be in
+        # a big file. It's not perfect, but should do a job in most cases.
+        new_line_segments = [s for s in segments if isinstance(s, NewlineSegment)]
+        progressbar_matching = tqdm(
+            total=len(new_line_segments),
+            desc="matching",
+            miniters=30,
+            disable=disable_progress_bar,
+            leave=False,
+        )
+
         # First iterate through all the segments, looking for the delimiter.
         # Second, split the list on each of the delimiters, and ensure that
         # each sublist in turn matches one of the elements.
@@ -66,6 +90,8 @@ class Delimited(OneOf):
         # In more detail, match against delimiter, if we match, put a slice
         # up to that point onto a list of slices. Carry on.
         while True:
+            progressbar_matching.update(n=1)
+
             # Check to see whether we've exhausted the buffer, either by iterating through it,
             # or by consuming all the non-code segments already.
             # NB: If we're here then we've already tried matching the remaining segments against
@@ -139,9 +165,34 @@ class Delimited(OneOf):
                             # We've already trimmed
                             trim_noncode=False,
                         )
-                    # No match, or an incomplete match: Not allowed
-                    if not match or not match.is_complete():
-                        return MatchResult.from_unmatched(mutated_segments)
+                    # No match - Not allowed
+                    if not match:
+                        if self.allow_trailing:
+                            # If we reach this point, the lookahead match has hit a delimiter
+                            # beyond the scope of this Delimited section. Trailing delimiters are allowed,
+                            # so return matched up to this section.
+                            return MatchResult(
+                                matched_segments.matched_segments,
+                                pre_non_code
+                                + match.unmatched_segments
+                                + post_non_code
+                                + delimiter_match.all_segments(),
+                            )
+                        else:
+                            return MatchResult.from_unmatched(mutated_segments)
+
+                    if not match.is_complete():
+                        # If we reach this point, the lookahead match has hit a delimiter
+                        # beyond the scope of this Delimited section. We should return a
+                        # partial match, and the delimiter as unmatched.
+                        return MatchResult(
+                            matched_segments.matched_segments
+                            + pre_non_code
+                            + match.matched_segments,
+                            match.unmatched_segments
+                            + post_non_code
+                            + delimiter_match.all_segments(),
+                        )
 
                     # We have a complete match!
 
@@ -197,7 +248,6 @@ class Delimited(OneOf):
                 # there's no sense to try matching
                 if self.min_delimiters and len(delimiters) < self.min_delimiters:
                     return MatchResult.from_unmatched(mutated_segments)
-
                 # We use the whitespace padded match to hoover up whitespace if enabled,
                 # and default to the longest matcher. We don't care which one matches.
                 pre_non_code, trimmed_segments, post_non_code = trim_non_code_segments(

@@ -1,5 +1,44 @@
 rule: L027
 
+test_pass_qualified_references_multi_table_statements:
+  pass_str: |
+    SELECT foo.a, vee.b
+    FROM foo
+    LEFT JOIN vee ON vee.a = foo.a
+
+test_fail_unqualified_references_multi_table_statements:
+  fail_str: |
+    SELECT a, b
+    FROM foo
+    LEFT JOIN vee ON vee.a = foo.a
+
+test_pass_qualified_references_multi_table_statements_subquery:
+  pass_str: |
+    SELECT a
+    FROM (
+        SELECT foo.a, vee.b
+        FROM foo
+        LEFT JOIN vee ON vee.a = foo.a
+    )
+
+test_fail_unqualified_references_multi_table_statements_subquery:
+  fail_str: |
+    SELECT a
+    FROM (
+        SELECT a, b
+        FROM foo
+        LEFT JOIN vee ON vee.a = foo.a
+    )
+
+test_pass_qualified_references_multi_table_statements_subquery_mix:
+  pass_str: |
+    SELECT foo.a, vee.b
+    FROM (
+        SELECT c
+        FROM bar
+    ) AS foo
+    LEFT JOIN vee ON vee.a = foo.a
+
 test_allow_date_parts_as_function_parameter_bigquery:
   # Allow use of BigQuery date parts (which are not quoted and were previously
   # mistaken for column references and flagged by this rule).
@@ -34,3 +73,138 @@ test_ignore_value_table_functions:
   configs:
     core:
       dialect: bigquery
+
+test_fail_column_and_alias_same_name:
+  # See issue #2169
+  fail_str: |
+    SELECT
+        foo AS foo,
+        bar AS bar
+    FROM
+        a LEFT JOIN b ON a.id = b.id
+
+test_pass_column_and_alias_same_name_1:
+  pass_str: |
+    SELECT
+        a.foo AS foo,
+        b.bar AS bar
+    FROM
+        a LEFT JOIN b ON a.id = b.id
+
+test_pass_column_and_alias_same_name_2:
+  # Possible for unqualified columns if
+  # it is actually an alias of another column.
+  pass_str: |
+    SELECT
+        a.bar AS baz,
+        baz
+    FROM
+        a LEFT JOIN b ON a.id = b.id
+
+test_pass_qualified_references_multi_table_statements_mysql:
+  pass_str: |
+    SELECT foo.a, vee.b
+    FROM foo
+    LEFT JOIN vee ON vee.a = foo.a
+  configs:
+    core:
+      dialect: mysql
+
+test_fail_unqualified_references_multi_table_statements_mysql:
+  fail_str: |
+    SELECT a, b
+    FROM foo
+    LEFT JOIN vee ON vee.a = foo.a
+  configs:
+    core:
+      dialect: mysql
+
+test_fail_column_and_alias_same_name_mysql:
+  # See issue #2169
+  fail_str: |
+    SELECT
+        foo AS foo,
+        bar AS bar
+    FROM
+        a LEFT JOIN b ON a.id = b.id
+  configs:
+    core:
+      dialect: mysql
+
+test_pass_column_and_alias_same_name_1_mysql:
+  pass_str: |
+    SELECT
+        a.foo AS foo,
+        b.bar AS bar
+    FROM
+        a LEFT JOIN b ON a.id = b.id
+  configs:
+    core:
+      dialect: mysql
+
+test_pass_column_and_alias_same_name_2_mysql:
+  # Possible for unqualified columns if
+  # it is actually an alias of another column.
+  pass_str: |
+    SELECT
+        a.bar AS baz,
+        baz
+    FROM
+        a LEFT JOIN b ON a.id = b.id
+  configs:
+    core:
+      dialect: mysql
+
+test_pass_qualified_references_multi_table_statements_tsql:
+  pass_str: |
+    SELECT foo.a, vee.b
+    FROM foo
+    LEFT JOIN vee ON vee.a = foo.a
+  configs:
+    core:
+      dialect: tsql
+
+test_fail_unqualified_references_multi_table_statements_tsql:
+  fail_str: |
+    SELECT a, b
+    FROM foo
+    LEFT JOIN vee ON vee.a = foo.a
+  configs:
+    core:
+      dialect: tsql
+
+test_fail_column_and_alias_same_name_tsql:
+  # See issue #2169
+  fail_str: |
+    SELECT
+        foo AS foo,
+        bar AS bar
+    FROM
+        a LEFT JOIN b ON a.id = b.id
+  configs:
+    core:
+      dialect: tsql
+
+test_pass_column_and_alias_same_name_1_tsql:
+  pass_str: |
+    SELECT
+        a.foo AS foo,
+        b.bar AS bar
+    FROM
+        a LEFT JOIN b ON a.id = b.id
+  configs:
+    core:
+      dialect: tsql
+
+test_pass_column_and_alias_same_name_2_tsql:
+  # Possible for unqualified columns if
+  # it is actually an alias of another column.
+  pass_str: |
+    SELECT
+        a.bar AS baz,
+        baz
+    FROM
+        a LEFT JOIN b ON a.id = b.id
+  configs:
+    core:
+      dialect: tsql

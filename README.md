@@ -9,7 +9,6 @@
 [![PyPi Downloads](https://img.shields.io/pypi/dm/sqlfluff?style=flat-square)](https://pypi.org/project/sqlfluff/)
 
 [![codecov](https://img.shields.io/codecov/c/gh/sqlfluff/sqlfluff.svg?style=flat-square&logo=Codecov)](https://codecov.io/gh/sqlfluff/sqlfluff)
-[![Requirements Status](https://img.shields.io/requires/github/sqlfluff/sqlfluff.svg?style=flat-square)](https://requires.io/github/sqlfluff/sqlfluff/requirements/?branch=main)
 [![CI Tests](https://github.com/sqlfluff/sqlfluff/workflows/CI%20Tests/badge.svg)](https://github.com/sqlfluff/sqlfluff/actions?query=workflow%3A%22CI+Tests%22)
 [![ReadTheDocs](https://img.shields.io/readthedocs/sqlfluff?style=flat-square&logo=Read%20the%20Docs)](https://sqlfluff.readthedocs.io)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg?style=flat-square)](https://github.com/psf/black)
@@ -61,7 +60,7 @@ L:   1 | P:  14 | L006 | Operators should be surrounded by a single space unless
 L:   1 | P:  27 | L001 | Unnecessary trailing whitespace
 ```
 
-You can also have a play using [**SQLFluff online**](https://online.sqlfluff.com/).
+Alternatively, you can use the [**Official SQLFluff Docker Image**](https://hub.docker.com/r/sqlfluff/sqlfluff) or have a play using [**SQLFluff online**](https://online.sqlfluff.com/).
 
 For full [CLI usage](https://docs.sqlfluff.com/en/stable/cli.html) and [rules reference](https://docs.sqlfluff.com/en/stable/rules.html), see [the SQLFluff docs](https://docs.sqlfluff.com/en/stable/).
 

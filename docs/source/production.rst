@@ -50,13 +50,13 @@ SQL code to be checked.
 
 2. Run `diff-quality`, specifying SQLFluff as the underlying tool:
 
-.. code-block:: bash
+.. code-block:: text
 
-    diff-quality --violations sqlfluff
+    $ diff-quality --violations sqlfluff
 
 The output will look something like:
 
-.. code-block:: bash
+.. code-block:: text
 
     -------------
     Diff Quality
@@ -117,16 +117,18 @@ like this:
     rev: |release|
     hooks:
       - id: sqlfluff-lint
-        # For dbt projects, this installs the dbt "extras":
-        # additional_dependencies: ['.[dbt]']
+        # For dbt projects, this installs the dbt "extras".
+        # You will need to select the relevant dbt adapter for your dialect
+        # (https://docs.getdbt.com/docs/available-adapters):
+        # additional_dependencies: ['<dbt-adapter>', 'sqlfluff-templater-dbt']
       - id: sqlfluff-fix
         # Arbitrary arguments to show an example
         # args: [--rules, "L003,L014"]
-        # additional_dependencies: ['.[dbt]']
+        # additional_dependencies: ['<dbt-adapter>', 'sqlfluff-templater-dbt']
 
 When trying to use the `dbt templater`_, uncomment the
 ``additional_dependencies`` to install the extras.
-This is equivalent to running ``pip install sqlfluff[dbt]``.
+This is equivalent to running ``pip install <dbt-adapter> sqlfluff-templater-dbt``.
 
 Note that you can pass the same arguments available
 through the CLI using ``args:``.

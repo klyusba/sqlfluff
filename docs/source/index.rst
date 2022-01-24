@@ -8,10 +8,11 @@ your database.
 
 .. note::
 
-    **SQLFluff** is still in an open alpha phase - expect the tool to
-    change significantly over the coming months, and expect potentially
-    non-backward compatible api changes to happen at any point. In
-    particular:
+    **SQLFluff** is still in an open Beta phase - expect potentially
+    non-backward compatible api changes to happen with releases
+    (particularly when major or minor version numbers increase).
+
+Notable changes:
 
 * **0.1.x** involved a major re-write of the parser, completely changing
   the behaviour of the tool with respect to complex parsing.
@@ -27,6 +28,11 @@ your database.
   of several innards
 * **0.7.x** extracted the dbt templater to a separate plugin and removed the
   `exasol_fs` dialect (now merged in with the main `exasol`)
+* **0.8.x** an improvement to the performance of the parser, a rebuild of the
+  Jinja Templater, and a progress bar for the CLI
+* **0.9.x** refinement of the Simple API, dbt 1.0.0 compatibility,
+  and the official SQLFluff Docker image.
+
 
 Want to see where and how people are using SQLFluff in their projects?
 Head over to :ref:`inthewildref` for inspiration.
@@ -38,7 +44,7 @@ To get started just install the package, make a sql file and then run
 SQLFluff and point it at the file. For more details or if you don't
 have python or pip already installed see :ref:`gettingstartedref`.
 
-.. code-block:: bash
+.. code-block:: text
 
     $ pip install sqlfluff
     $ echo "  SELECT a  +  b FROM tbl;  " > test.sql

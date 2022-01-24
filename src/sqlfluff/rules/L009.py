@@ -5,14 +5,15 @@ from sqlfluff.core.parser import NewlineSegment
 
 from sqlfluff.core.rules.base import BaseRule, LintResult, LintFix, RuleContext
 from sqlfluff.core.rules.doc_decorators import document_fix_compatible
+from sqlfluff.core.rules.functional import Segments, rsp, sp
 
 
 @document_fix_compatible
 class Rule_L009(BaseRule):
-    """Files must end with a trailing newline.
+    """Files must end with a single trailing newline.
 
     | **Anti-pattern**
-    | The content in file without ends without a trailing newline, the $ represents end of file.
+    | The content in file does not end with a single trailing newline, the $ represents end of file.
 
     .. code-block:: sql
        :force:
@@ -35,6 +36,14 @@ class Rule_L009(BaseRule):
             a
         FROM foo
         ;$
+
+        -- Ending with multiple newlines.
+
+        SELECT
+            a
+        FROM foo
+
+        $
 
     | **Best practice**
     | Add trailing newline to the end, the $ character represents end of file.
@@ -66,40 +75,60 @@ class Rule_L009(BaseRule):
     """
 
     def _eval(self, context: RuleContext) -> Optional[LintResult]:
-        """Files must end with a trailing newline.
+        """Files must end with a single trailing newline.
 
         We only care about the segment and the siblings which come after it
         for this rule, we discard the others into the kwargs argument.
 
         """
-        if len(self.filter_meta(context.siblings_post)) > 0:
-            # This can only fail on the last segment
+        # We only care about the final segment of the parse tree.
+        if not self.is_final_segment(context):
             return None
-        elif len(context.segment.segments) > 0:
-            # This can only fail on the last base segment
-            return None
-        elif context.segment.name == "newline":
-            # If this is the last segment, and it's a newline then we're good
-            return None
-        elif context.segment.is_meta:
-            # We can't fail on a meta segment
-            return None
-        else:
-            # So this looks like the end of the file, but we
-            # need to check that each parent segment is also the last.
-            # We do this with reference to the templated file, because it's
-            # the best we can do given the information available.
-            file_len = len(context.segment.pos_marker.templated_file.templated_str)
-            pos = context.segment.pos_marker.templated_slice.stop
-            # Does the length of the file equal the end of the templated position?
-            if file_len != pos:
-                return None
 
-        # We're going to make an edit because we're appending to the end and there's
-        # no segment after it to match on. Otherwise we would never get a match!
-        return LintResult(
-            anchor=context.segment,
-            fixes=[
-                LintFix("edit", context.segment, [context.segment, NewlineSegment()])
-            ],
+        # Include current segment for complete stack and reverse.
+        parent_stack: Segments = context.functional.parent_stack
+        complete_stack: Segments = (
+            context.functional.raw_stack + context.functional.segment
         )
+        reversed_complete_stack = complete_stack.reversed()
+
+        # Find the trailing newline segments.
+        trailing_newlines = reversed_complete_stack.select(
+            select_if=sp.is_type("newline"),
+            loop_while=sp.or_(sp.is_whitespace(), sp.is_type("dedent")),
+        )
+
+        if not trailing_newlines:
+            # We make an edit to create this segment after the child of the FileSegment.
+            if len(parent_stack) == 1:
+                fix_anchor_segment = context.segment
+            else:
+                fix_anchor_segment = parent_stack[1]
+
+            return LintResult(
+                anchor=context.segment,
+                fixes=[
+                    LintFix.create_after(
+                        fix_anchor_segment,
+                        [NewlineSegment()],
+                    )
+                ],
+            )
+        else:
+            # There are one or more trailing newlines in templated space.
+            # For any excess newlines, translate to "raw" space to determine if
+            # they are literal (rather than templated). Delete any extras.
+            # (Note that 'trailing_newlines' is ordered in reverse, i.e. from
+            # the end of the file *backwards*.)
+            extra_newlines = trailing_newlines[1:].select(
+                loop_while=lambda seg: sp.raw_slices(seg, context.templated_file).all(
+                    rsp.is_slice_type("literal")
+                )
+            )
+            if extra_newlines:
+                return LintResult(
+                    anchor=context.segment,
+                    fixes=[LintFix.delete(d) for d in extra_newlines],
+                )
+            # Single newline, no need for fix.
+            return None

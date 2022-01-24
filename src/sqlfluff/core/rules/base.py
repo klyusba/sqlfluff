@@ -16,17 +16,21 @@ missing.
 
 import bdb
 import copy
+import fnmatch
 import logging
 import pathlib
-import re
-from typing import Optional, List, Set, Tuple, Union, Any
+import regex
+from typing import Iterable, Optional, List, Set, Tuple, Union, Any
 from collections import namedtuple
 from dataclasses import dataclass
+
+from sqlfluff.core.cached_property import cached_property
 
 from sqlfluff.core.linter import LintedFile
 from sqlfluff.core.parser import BaseSegment, RawSegment
 from sqlfluff.core.dialects import Dialect
 from sqlfluff.core.errors import SQLLintError
+from sqlfluff.core.rules.functional import Segments
 from sqlfluff.core.templaters.base import RawFileSlice, TemplatedFile
 
 # The ghost of a rule (mostly used for testing)
@@ -67,7 +71,13 @@ class LintResult:
 
     """
 
-    def __init__(self, anchor=None, fixes=None, memory=None, description=None):
+    def __init__(
+        self,
+        anchor: Optional[BaseSegment] = None,
+        fixes: Optional[List["LintFix"]] = None,
+        memory=None,
+        description=None,
+    ):
         # An anchor of none, means no issue
         self.anchor = anchor
         # Fixes might be blank
@@ -98,37 +108,51 @@ class LintFix:
     """A class to hold a potential fix to a linting violation.
 
     Args:
-        edit_type (:obj:`str`): One of `create`, `edit`, `delete` to indicate
-            the kind of fix this represents.
+        edit_type (:obj:`str`): One of `create_before`, `create_after,
+            `replace`, `delete` to indicate the kind of fix this represents.
         anchor (:obj:`BaseSegment`): A segment which represents
             the *position* that this fix should be applied at. For deletions
             it represents the segment to delete, for creations it implies the
             position to create at (with the existing element at this position
-            to be moved *after* the edit), for an `edit` it implies the segment
-            to be replaced.
-        edit (:obj:`BaseSegment`, optional): For `edit` and `create` fixes, this
-            hold the segment, or iterable of segments to create or replace at the
+            to be moved *after* the edit), for a `replace` it implies the
+            segment to be replaced.
+        edit (:obj:`BaseSegment`, optional): For `replace` and `create` fixes,
+            this holds the iterable of segments to create or replace at the
             given `anchor` point.
+        source (:obj:`BaseSegment`, optional): For `replace` and `create` fixes,
+            this holds iterable of segments that provided code. IMPORTANT: The
+            linter uses this to prevent copying material from templated areas.
 
     """
 
-    def __init__(self, edit_type, anchor: BaseSegment, edit=None):
-        if edit_type not in ["create", "edit", "delete"]:  # pragma: no cover
+    def __init__(
+        self,
+        edit_type: str,
+        anchor: BaseSegment,
+        edit: Optional[Iterable[BaseSegment]] = None,
+        source: Optional[Iterable[BaseSegment]] = None,
+    ) -> None:
+        if edit_type not in (
+            "create_before",
+            "create_after",
+            "replace",
+            "delete",
+        ):  # pragma: no cover
             raise ValueError(f"Unexpected edit_type: {edit_type}")
         self.edit_type = edit_type
         if not anchor:  # pragma: no cover
             raise ValueError("Fixes must provide an anchor.")
         self.anchor = anchor
-        # Coerce to list
-        if isinstance(edit, BaseSegment):
-            edit = [edit]
-        # Copy all the elements of edit to stop contamination.
-        # We're about to start stripping the position markers
-        # of some of the elements and we don't want to end up
-        # stripping the positions of the original elements of
-        # the parsed structure.
-        self.edit = copy.deepcopy(edit)
-        if self.edit:
+        self.edit: Optional[List[BaseSegment]] = None
+        if edit is not None:
+            # Coerce edit iterable to list
+            edit = list(edit)
+            # Copy all the elements of edit to stop contamination.
+            # We're about to start stripping the position markers
+            # off some of the elements and we don't want to end up
+            # stripping the positions of the original elements of
+            # the parsed structure.
+            self.edit = copy.deepcopy(edit)
             # Check that any edits don't have a position marker set.
             # We should rely on realignment to make position markers.
             # Strip position markers of anything enriched, otherwise things can get blurry
@@ -139,10 +163,11 @@ class LintFix:
                         "Developer Note: Edit segment found with preset position marker. "
                         "These should be unset and calculated later."
                     )
-                    seg.pos_marker = None
-        # Once stripped, we shouldn't replace any markers because
-        # later code may rely on them being accurate, which we
-        # can't guarantee with edits.
+                    seg.pos_marker = None  # type: ignore
+            # Once stripped, we shouldn't replace any markers because
+            # later code may rely on them being accurate, which we
+            # can't guarantee with edits.
+        self.source = [seg for seg in source if seg.pos_marker] if source else []
 
     def is_trivial(self):
         """Return true if the fix is trivial.
@@ -153,26 +178,26 @@ class LintFix:
 
         Removing these makes the routines which process fixes much faster.
         """
-        if self.edit_type == "create":
+        if self.edit_type in ("create_before", "create_after"):
             if isinstance(self.edit, BaseSegment):
                 if len(self.edit.raw) == 0:  # pragma: no cover TODO?
                     return True
             elif all(len(elem.raw) == 0 for elem in self.edit):
                 return True
-        elif self.edit_type == "edit" and self.edit == self.anchor:
+        elif self.edit_type == "replace" and self.edit == self.anchor:
             return True  # pragma: no cover TODO?
         return False
 
     def __repr__(self):
         if self.edit_type == "delete":
             detail = f"delete:{self.anchor.raw!r}"
-        elif self.edit_type in ("edit", "create"):
+        elif self.edit_type in ("replace", "create_before", "create_after"):
             if hasattr(self.edit, "raw"):
                 new_detail = self.edit.raw  # pragma: no cover TODO?
             else:
                 new_detail = "".join(s.raw for s in self.edit)
 
-            if self.edit_type == "edit":
+            if self.edit_type == "replace":
                 detail = f"edt:{self.anchor.raw!r}->{new_detail!r}"
             else:
                 detail = f"create:{new_detail!r}"
@@ -197,6 +222,106 @@ class LintFix:
             return False
         return True  # pragma: no cover TODO?
 
+    @classmethod
+    def delete(cls, anchor_segment: BaseSegment) -> "LintFix":
+        """Delete supplied anchor segment."""
+        return cls("delete", anchor_segment)
+
+    @classmethod
+    def replace(
+        cls,
+        anchor_segment: BaseSegment,
+        edit_segments: Iterable[BaseSegment],
+        source: Optional[Iterable[BaseSegment]] = None,
+    ) -> "LintFix":
+        """Replace supplied anchor segment with the edit segments."""
+        return cls("replace", anchor_segment, edit_segments, source)
+
+    @classmethod
+    def create_before(
+        cls,
+        anchor_segment: BaseSegment,
+        edit_segments: Iterable[BaseSegment],
+        source: Optional[Iterable[BaseSegment]] = None,
+    ) -> "LintFix":
+        """Create edit segments before the supplied anchor segment."""
+        return cls("create_before", anchor_segment, edit_segments, source)
+
+    @classmethod
+    def create_after(
+        cls,
+        anchor_segment: BaseSegment,
+        edit_segments: Iterable[BaseSegment],
+        source: Optional[Iterable[BaseSegment]] = None,
+    ) -> "LintFix":
+        """Create edit segments after the supplied anchor segment."""
+        return cls("create_after", anchor_segment, edit_segments, source)
+
+    def has_template_conflicts(self, templated_file: TemplatedFile) -> bool:
+        """Does this fix conflict with (i.e. touch) templated code?"""
+        # Goal: Find the raw slices touched by the fix. Two cases, based on
+        # edit type:
+        # 1. "delete", "replace": Raw slices touching the anchor segment. If
+        #    ANY are templated, discard the fix.
+        # 2. "create_before", "create_after": Raw slices encompassing the two
+        #    character positions surrounding the insertion point (**NOT** the
+        #    whole anchor segment, because we're not *touching* the anchor
+        #    segment, we're inserting **RELATIVE** to it. If ALL are templated,
+        #    discard the fix.
+        anchor_slice = self.anchor.pos_marker.templated_slice
+        templated_slices = [anchor_slice]
+        check_fn = any
+
+        if self.edit_type == "create_before":
+            # Consider the first position of the anchor segment and the
+            # position just before it.
+            templated_slices = [
+                slice(anchor_slice.start, anchor_slice.start + 1),
+                slice(anchor_slice.start - 1, anchor_slice.start),
+            ]
+            check_fn = all
+        elif self.edit_type == "create_after":
+            # Consider the last position of the anchor segment and the
+            # character just after it.
+            templated_slices = [
+                slice(anchor_slice.stop - 1, anchor_slice.stop),
+                slice(anchor_slice.stop, anchor_slice.stop + 1),
+            ]
+            check_fn = all
+        fix_slices = self._raw_slices_from_templated_slices(
+            templated_file, templated_slices
+        )
+
+        # We have the fix slices. Now check for conflicts.
+        result = check_fn(fs.slice_type == "templated" for fs in fix_slices)
+        if result or not self.source:
+            return result
+
+        # Fix slices were okay. Now check template safety of the "source" field.
+        templated_slices = [source.pos_marker.templated_slice for source in self.source]
+        raw_slices = self._raw_slices_from_templated_slices(
+            templated_file, templated_slices
+        )
+        return any(fs.slice_type == "templated" for fs in raw_slices)
+
+    @staticmethod
+    def _raw_slices_from_templated_slices(templated_file, templated_slices):
+        raw_slices: Set[RawFileSlice] = set()
+        for templated_slice in templated_slices:
+            try:
+                raw_slices.update(
+                    templated_file.raw_slices_spanning_source_slice(
+                        templated_file.templated_slice_to_source_slice(templated_slice)
+                    )
+                )
+            except (IndexError, ValueError):
+                # These errors will happen with "create_before" at the beginning
+                # of the file or "create_after" at the end of the file. Ignoring
+                # it is the correct action, because the other (anchor) slice
+                # is still valid.
+                pass
+        return raw_slices
+
 
 EvalResultType = Union[LintResult, List[LintResult], None]
 
@@ -214,6 +339,61 @@ class RuleContext:
     dialect: Dialect
     path: Optional[pathlib.Path]
     templated_file: Optional[TemplatedFile]
+
+    @cached_property
+    def functional(self):
+        """Returns a Surrogates object that simplifies writing rules."""
+        return FunctionalRuleContext(self)
+
+
+class FunctionalRuleContext:
+    """RuleContext written in a "functional" style; simplifies writing rules."""
+
+    def __init__(self, context: RuleContext):
+        self.context = context
+
+    @cached_property
+    def segment(self) -> "Segments":
+        """Returns a Segments object for context.segment."""
+        return Segments(
+            self.context.segment, templated_file=self.context.templated_file
+        )
+
+    @property
+    def parent_stack(self) -> "Segments":  # pragma: no cover
+        """Returns a Segments object for context.parent_stack."""
+        return Segments(
+            *self.context.parent_stack, templated_file=self.context.templated_file
+        )
+
+    @property
+    def siblings_pre(self) -> "Segments":  # pragma: no cover
+        """Returns a Segments object for context.siblings_pre."""
+        return Segments(
+            *self.context.siblings_pre, templated_file=self.context.templated_file
+        )
+
+    @property
+    def siblings_post(self) -> "Segments":  # pragma: no cover
+        """Returns a Segments object for context.siblings_post."""
+        return Segments(
+            *self.context.siblings_post, templated_file=self.context.templated_file
+        )
+
+    @cached_property
+    def raw_stack(self) -> "Segments":
+        """Returns a Segments object for context.raw_stack."""
+        return Segments(
+            *self.context.raw_stack, templated_file=self.context.templated_file
+        )
+
+    @cached_property
+    def raw_segments(self):
+        """Returns a Segments object for all the raw segments in the file."""
+        file_segment = self.context.parent_stack[0]
+        return Segments(
+            *file_segment.get_raw_segments(), templated_file=self.context.templated_file
+        )
 
 
 class BaseRule:
@@ -433,6 +613,42 @@ class BaseRule:
 
     # HELPER METHODS --------
 
+    @cached_property
+    def indent(self) -> str:
+        """String for a single indent, based on configuration."""
+        self.tab_space_size: int
+        self.indent_unit: str
+
+        tab = "\t"
+        space = " "
+        return space * self.tab_space_size if self.indent_unit == "space" else tab
+
+    def is_final_segment(self, context: RuleContext) -> bool:
+        """Is the current segment the final segment in the parse tree."""
+        if len(self.filter_meta(context.siblings_post)) > 0:
+            # This can only fail on the last segment
+            return False
+        elif len(context.segment.segments) > 0:
+            # This can only fail on the last base segment
+            return False
+        elif context.segment.is_meta:
+            # We can't fail on a meta segment
+            return False
+        else:
+            # We know we are at a leaf of the tree but not necessarily at the end of the tree.
+            # Therefore we look backwards up the parent stack and ask if any of the parent segments
+            # have another non-meta child segment after the current one.
+            child_segment = context.segment
+            for parent_segment in context.parent_stack[::-1]:
+                possible_children = [
+                    s for s in parent_segment.segments if not s.is_meta
+                ]
+                if len(possible_children) > possible_children.index(child_segment) + 1:
+                    return False
+                child_segment = parent_segment
+
+        return True
+
     @staticmethod
     def filter_meta(segments, keep_meta=False):
         """Filter the segments to non-meta.
@@ -517,7 +733,7 @@ class BaseRule:
 
         # If the fixes touch a literal-only loop, discard the fixes.
         # Rationale: Fixes to a template loop that contains only literals are:
-        # - Difficult to correctly back to source code, so there's a risk of
+        # - Difficult to map correctly back to source code, so there's a risk of
         #   accidentally "expanding" the loop body if we apply them.
         # - Highly unusual (In practice, templated loops in SQL are usually for
         #   expanding the same code using different column names, types, etc.,
@@ -526,6 +742,15 @@ class BaseRule:
             if block_id in block_info.literal_only_loops:
                 linter_logger.info(
                     "      * Discarding fixes to literal-only loop: %s",
+                    lint_result.fixes,
+                )
+                lint_result.fixes = []
+                return
+
+        for fix in lint_result.fixes:
+            if fix.has_template_conflicts(templated_file):
+                linter_logger.info(
+                    "      * Discarding fixes that touch templated code: %s",
                     lint_result.fixes,
                 )
                 lint_result.fixes = []
@@ -542,7 +767,7 @@ class RuleSet:
     path that the file is in.
 
     Rules should be fetched using the :meth:`get_rulelist` command which
-    also handles any filtering (i.e. whitelisting and blacklisting).
+    also handles any filtering (i.e. allowlisting and denylisting).
 
     New rules should be added to the instance of this class using the
     :meth:`register` decorator. That decorator registers the class, but also
@@ -597,10 +822,11 @@ class RuleSet:
         The second group captures the rule code.
 
         Examples of valid rule names:
+
         * Rule_PluginName_L001
         * Rule_L001
         """
-        return re.compile(r"Rule_?([A-Z]{1}[a-zA-Z]+)?_([A-Z][0-9]{3})")
+        return regex.compile(r"Rule_?([A-Z]{1}[a-zA-Z]+)?_([A-Z][0-9]{3})")
 
     def register(self, cls, plugin=None):
         """Decorate a class with this to add it to the ruleset.
@@ -652,10 +878,29 @@ class RuleSet:
         # Make sure we actually return the original class
         return cls
 
+    def _expand_config_rule_glob_list(self, glob_list: List[str]) -> List[str]:
+        """Expand a list of rule globs into a list of rule codes.
+
+        Returns:
+            :obj:`list` of :obj:`str` rule codes.
+
+        """
+        expanded_glob_list = []
+        for r in glob_list:
+            expanded_glob_list.extend(
+                [
+                    x
+                    for x in fnmatch.filter(self._register, r)
+                    if x not in expanded_glob_list
+                ]
+            )
+
+        return expanded_glob_list
+
     def get_rulelist(self, config) -> List[BaseRule]:
         """Use the config to return the appropriate rules.
 
-        We use the config both for whitelisting and blacklisting, but also
+        We use the config both for allowlisting and denylisting, but also
         for configuring the rules given the given config.
 
         Returns:
@@ -664,33 +909,40 @@ class RuleSet:
         """
         # Validate all generic rule configs
         self._validate_config_options(config)
-        # default the whitelist to all the rules if not set
-        whitelist = config.get("rule_whitelist") or list(self._register.keys())
-        blacklist = config.get("rule_blacklist") or []
+        # default the allowlist to all the rules if not set
+        allowlist = config.get("rule_allowlist") or list(self._register.keys())
+        denylist = config.get("rule_denylist") or []
 
-        whitelisted_unknown_rule_codes = [
-            r for r in whitelist if r not in self._register
+        allowlisted_unknown_rule_codes = [
+            r for r in allowlist if not fnmatch.filter(self._register, r)
         ]
-        if any(whitelisted_unknown_rule_codes):
+        if any(allowlisted_unknown_rule_codes):
             rules_logger.warning(
-                "Tried to whitelist unknown rules: {!r}".format(
-                    whitelisted_unknown_rule_codes
+                "Tried to allowlist unknown rules: {!r}".format(
+                    allowlisted_unknown_rule_codes
                 )
             )
 
-        blacklisted_unknown_rule_codes = [
-            r for r in blacklist if r not in self._register
+        denylisted_unknown_rule_codes = [
+            r for r in denylist if not fnmatch.filter(self._register, r)
         ]
-        if any(blacklisted_unknown_rule_codes):  # pragma: no cover
+        if any(denylisted_unknown_rule_codes):  # pragma: no cover
             rules_logger.warning(
-                "Tried to blacklist unknown rules: {!r}".format(
-                    blacklisted_unknown_rule_codes
+                "Tried to denylist unknown rules: {!r}".format(
+                    denylisted_unknown_rule_codes
                 )
             )
 
         keylist = sorted(self._register.keys())
-        # First we filter the rules
-        keylist = [r for r in keylist if r in whitelist and r not in blacklist]
+
+        # First we expand the allowlist and denylist globs
+        expanded_allowlist = self._expand_config_rule_glob_list(allowlist)
+        expanded_denylist = self._expand_config_rule_glob_list(denylist)
+
+        # Then we filter the rules
+        keylist = [
+            r for r in keylist if r in expanded_allowlist and r not in expanded_denylist
+        ]
 
         # Construct the kwargs for instantiation before we actually do it.
         rule_kwargs = {}

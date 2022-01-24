@@ -5,7 +5,9 @@ import tempfile
 import os
 import shutil
 import json
-import oyaml as yaml
+from unittest.mock import MagicMock, patch
+
+import yaml
 import subprocess
 import chardet
 import sys
@@ -57,7 +59,13 @@ def test__cli__command_directed():
     """Basic checking of lint functionality."""
     result = invoke_assert_code(
         ret_code=65,
-        args=[lint, ["test/fixtures/linter/indentation_error_simple.sql"]],
+        args=[
+            lint,
+            [
+                "--disable_progress_bar",
+                "test/fixtures/linter/indentation_error_simple.sql",
+            ],
+        ],
     )
     # We should get a readout of what the error was
     check_a = "L:   2 | P:   4 | L003"
@@ -104,6 +112,25 @@ def test__cli__command_dialect_legacy():
     assert "Please use the 'exasol' dialect instead." in result.stdout
 
 
+def test__cli__command_extra_config_fail():
+    """Check the script raises the right exception on a non-existant extra config path."""
+    result = invoke_assert_code(
+        ret_code=66,
+        args=[
+            lint,
+            [
+                "--config",
+                "test/fixtures/cli/extra_configs/.sqlfluffsdfdfdfsfd",
+                "test/fixtures/cli/extra_config_tsql.sql",
+            ],
+        ],
+    )
+    assert (
+        "Extra config 'test/fixtures/cli/extra_configs/.sqlfluffsdfdfdfsfd' does not exist."
+        in result.stdout
+    )
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -141,20 +168,49 @@ def test__cli__command_lint_stdin(command):
     "command",
     [
         # Test basic linting
-        (lint, ["-n", "test/fixtures/cli/passing_b.sql"]),
+        (lint, ["-n", "test/fixtures/cli/passing_b.sql", "--exclude-rules", "L051"]),
         # Original tests from test__cli__command_lint
         (lint, ["-n", "test/fixtures/cli/passing_a.sql"]),
         (lint, ["-n", "-v", "test/fixtures/cli/passing_a.sql"]),
         (lint, ["-n", "-vvvv", "test/fixtures/cli/passing_a.sql"]),
         (lint, ["-vvvv", "test/fixtures/cli/passing_a.sql"]),
         # Test basic linting with very high verbosity
-        (lint, ["-n", "test/fixtures/cli/passing_b.sql", "-vvvvvvvvvvv"]),
+        (
+            lint,
+            [
+                "-n",
+                "test/fixtures/cli/passing_b.sql",
+                "-vvvvvvvvvvv",
+                "--exclude-rules",
+                "L051",
+            ],
+        ),
         # Test basic linting with specific logger
-        (lint, ["-n", "test/fixtures/cli/passing_b.sql", "-vvv", "--logger", "parser"]),
+        (
+            lint,
+            [
+                "-n",
+                "test/fixtures/cli/passing_b.sql",
+                "-vvv",
+                "--logger",
+                "parser",
+                "--exclude-rules",
+                "L051",
+            ],
+        ),
         # Check basic parsing
-        (parse, ["-n", "test/fixtures/cli/passing_b.sql"]),
+        (parse, ["-n", "test/fixtures/cli/passing_b.sql", "--exclude-rules", "L051"]),
         # Test basic parsing with very high verbosity
-        (parse, ["-n", "test/fixtures/cli/passing_b.sql", "-vvvvvvvvvvv"]),
+        (
+            parse,
+            [
+                "-n",
+                "test/fixtures/cli/passing_b.sql",
+                "-vvvvvvvvvvv",
+                "--exclude-rules",
+                "L051",
+            ],
+        ),
         # Check basic parsing, with the code only option
         (parse, ["-n", "test/fixtures/cli/passing_b.sql", "-c"]),
         # Check basic parsing, with the yaml output
@@ -163,8 +219,26 @@ def test__cli__command_lint_stdin(command):
         # Check the profiler and benching commands
         (parse, ["-n", "test/fixtures/cli/passing_b.sql", "--profiler"]),
         (parse, ["-n", "test/fixtures/cli/passing_b.sql", "--bench"]),
-        (lint, ["-n", "test/fixtures/cli/passing_b.sql", "--bench"]),
-        (fix, ["-n", "test/fixtures/cli/passing_b.sql", "--bench"]),
+        (
+            lint,
+            [
+                "-n",
+                "test/fixtures/cli/passing_b.sql",
+                "--bench",
+                "--exclude-rules",
+                "L051",
+            ],
+        ),
+        (
+            fix,
+            [
+                "-n",
+                "test/fixtures/cli/passing_b.sql",
+                "--bench",
+                "--exclude-rules",
+                "L051",
+            ],
+        ),
         # Check linting works in specifying rules
         (lint, ["-n", "--rules", "L001", "test/fixtures/linter/operator_errors.sql"]),
         # Check linting works in specifying multiple rules
@@ -208,6 +282,15 @@ def test__cli__command_lint_stdin(command):
         ),
         # Check nofail works
         (lint, ["--nofail", "test/fixtures/linter/parse_lex_error.sql"]),
+        # Check config works (sets dialect to tsql)
+        (
+            lint,
+            [
+                "--config",
+                "test/fixtures/cli/extra_configs/.sqlfluff",
+                "test/fixtures/cli/extra_config_tsql.sql",
+            ],
+        ),
     ],
 )
 def test__cli__command_lint_parse(command):
@@ -289,14 +372,40 @@ def test__cli__command_lint_skip_ignore_files():
     assert "L009" in result.output.strip()
 
 
+def test__cli__command_lint_ignore_local_config():
+    """Test that --ignore-local_config ignores .sqlfluff file as expected."""
+    runner = CliRunner()
+    # First we test that not including the --ignore-local-config includes
+    # .sqlfluff file, and therefore the lint doesn't raise L012
+    result = runner.invoke(
+        lint,
+        [
+            "test/fixtures/cli/ignore_local_config/ignore_local_config_test.sql",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "L012" not in result.output.strip()
+    # Then repeat the same lint but this time ignoring the .sqlfluff file.
+    # We should see L012 raised.
+    result = runner.invoke(
+        lint,
+        [
+            "--ignore-local-config",
+            "test/fixtures/cli/ignore_local_config/ignore_local_config_test.sql",
+        ],
+    )
+    assert result.exit_code == 65
+    assert "L012" in result.output.strip()
+
+
 def test__cli__command_versioning():
     """Check version command."""
     # Get the package version info
     pkg_version = sqlfluff.__version__
     # Get the version info from the config file
     config = configparser.ConfigParser()
-    config.read_file(open("src/sqlfluff/config.ini"))
-    config_version = config["sqlfluff"]["version"]
+    config.read_file(open("setup.cfg"))
+    config_version = config["metadata"]["version"]
     assert pkg_version == config_version
     # Get the version from the cli
     runner = CliRunner()
@@ -421,7 +530,9 @@ def test__cli__command__fix(rule, fname):
 )
 def test__cli__command_fix_stdin(stdin, rules, stdout):
     """Check stdin input for fix works."""
-    result = invoke_assert_code(args=[fix, ("-", "--rules", rules)], cli_input=stdin)
+    result = invoke_assert_code(
+        args=[fix, ("-", "--rules", rules, "--disable_progress_bar")], cli_input=stdin
+    )
     assert result.output == stdout
 
 
@@ -449,7 +560,9 @@ def test__cli__command_fix_stdin_safety():
     perfect_sql = "select col from table"
 
     # just prints the very same thing
-    result = invoke_assert_code(args=[fix, ("-",)], cli_input=perfect_sql)
+    result = invoke_assert_code(
+        args=[fix, ("-", "--disable_progress_bar")], cli_input=perfect_sql
+    )
     assert result.output.strip() == perfect_sql
 
 
@@ -564,7 +677,10 @@ def test__cli__command_parse_serialize_from_stdin(serialize):
 def test__cli__command_lint_serialize_from_stdin(serialize, sql, expected, exit_code):
     """Check an explicit serialized return value for a single error."""
     result = invoke_assert_code(
-        args=[lint, ("-", "--rules", "L010", "--format", serialize)],
+        args=[
+            lint,
+            ("-", "--rules", "L010", "--format", serialize, "--disable_progress_bar"),
+        ],
         cli_input=sql,
         ret_code=exit_code,
     )
@@ -597,7 +713,7 @@ def test__cli__command_lint_serialize_multiple_files(serialize):
 
     # note the file is in here twice. two files = two payloads.
     result = invoke_assert_code(
-        args=[lint, (fpath, fpath, "--format", serialize)],
+        args=[lint, (fpath, fpath, "--format", serialize, "--disable_progress_bar")],
         ret_code=65,
     )
 
@@ -621,7 +737,14 @@ def test__cli__command_lint_serialize_github_annotation():
     result = invoke_assert_code(
         args=[
             lint,
-            (fpath, "--format", "github-annotation", "--annotation-level", "warning"),
+            (
+                fpath,
+                "--format",
+                "github-annotation",
+                "--annotation-level",
+                "warning",
+                "--disable_progress_bar",
+            ),
         ],
         ret_code=65,
     )
@@ -741,3 +864,177 @@ def test_encoding(encoding_in, encoding_out):
             input_file_encoding=encoding_in,
             output_file_encoding=encoding_out,
         )
+
+
+def test_cli_pass_on_correct_encoding_argument():
+    """Try loading a utf-8-SIG encoded file using the correct encoding via the cli."""
+    result = invoke_assert_code(
+        ret_code=65,
+        args=[
+            lint,
+            ["test/fixtures/cli/encoding_test.sql", "--encoding", "utf-8-SIG"],
+        ],
+    )
+    raw_output = repr(result.output)
+
+    # Incorrect encoding raises paring and lexer errors.
+    assert r"L:   1 | P:   1 |  LXR |" not in raw_output
+    assert r"L:   1 | P:   1 |  PRS |" not in raw_output
+
+
+def test_cli_fail_on_wrong_encoding_argument():
+    """Try loading a utf-8-SIG encoded file using the wrong encoding via the cli."""
+    result = invoke_assert_code(
+        ret_code=65,
+        args=[
+            lint,
+            ["test/fixtures/cli/encoding_test.sql", "--encoding", "utf-8"],
+        ],
+    )
+    raw_output = repr(result.output)
+
+    # Incorrect encoding raises paring and lexer errors.
+    assert r"L:   1 | P:   1 |  LXR |" in raw_output
+    assert r"L:   1 | P:   1 |  PRS |" in raw_output
+
+
+def test_cli_no_disable_noqa_flag():
+    """Test that unset --disable_noqa flag respects inline noqa comments."""
+    invoke_assert_code(
+        ret_code=0,
+        args=[
+            lint,
+            ["test/fixtures/cli/disable_noqa_test.sql"],
+        ],
+    )
+
+
+def test_cli_disable_noqa_flag():
+    """Test that --disable_noqa flag ignores inline noqa comments."""
+    result = invoke_assert_code(
+        ret_code=65,
+        args=[
+            lint,
+            ["test/fixtures/cli/disable_noqa_test.sql", "--disable-noqa"],
+        ],
+    )
+    raw_output = repr(result.output)
+
+    # Linting error is raised even though it is inline ignored.
+    assert r"L:   5 | P:  11 | L010 |" in raw_output
+
+
+@patch(
+    "sqlfluff.core.linter.linter.progress_bar_configuration", disable_progress_bar=False
+)
+class TestProgressBars:
+    """Progress bars test cases.
+
+    The tqdm package, used for handling progress bars, is able to tell when it is used
+    in a not tty terminal (when `disable` is set to None). In such cases, it just does
+    not render anything. To suppress that for testing purposes, we need to set
+    implicitly that we don't want to disable it.
+    Probably it would be better - cleaner - just to patch `isatty` at some point,
+    but I didn't find a way how to do that properly.
+    """
+
+    def test_cli_lint_disabled_progress_bar(
+        self, mock_disable_progress_bar: MagicMock
+    ) -> None:
+        """When progress bar is disabled, nothing should be printed into output."""
+        result = invoke_assert_code(
+            ret_code=65,
+            args=[
+                lint,
+                [
+                    "--disable_progress_bar",
+                    "test/fixtures/linter/passing.sql",
+                ],
+            ],
+        )
+        raw_output = repr(result.output)
+
+        assert "\rpath test/fixtures/linter/passing.sql:" not in raw_output
+        assert "\rparsing: 0it" not in raw_output
+        assert "\r\rlint by rules:" not in raw_output
+
+    def test_cli_lint_enabled_progress_bar(
+        self, mock_disable_progress_bar: MagicMock
+    ) -> None:
+        """When progress bar is enabled, there should be some tracks in output."""
+        result = invoke_assert_code(
+            ret_code=65,
+            args=[
+                lint,
+                [
+                    "test/fixtures/linter/passing.sql",
+                ],
+            ],
+        )
+        raw_output = repr(result.output)
+
+        assert r"\rlint by rules:" in raw_output
+        assert r"\rrule L001:" in raw_output
+        assert r"\rrule L049:" in raw_output
+
+    def test_cli_lint_enabled_progress_bar_multiple_paths(
+        self, mock_disable_progress_bar: MagicMock
+    ) -> None:
+        """When progress bar is enabled, there should be some tracks in output."""
+        result = invoke_assert_code(
+            ret_code=65,
+            args=[
+                lint,
+                [
+                    "test/fixtures/linter/passing.sql",
+                    "test/fixtures/linter/indentation_errors.sql",
+                ],
+            ],
+        )
+        raw_output = repr(result.output)
+
+        assert r"\rpath test/fixtures/linter/passing.sql:" in raw_output
+        assert r"\rpath test/fixtures/linter/indentation_errors.sql:" in raw_output
+        assert r"\rlint by rules:" in raw_output
+        assert r"\rrule L001:" in raw_output
+        assert r"\rrule L049:" in raw_output
+
+    def test_cli_lint_enabled_progress_bar_multiple_files(
+        self, mock_disable_progress_bar: MagicMock
+    ) -> None:
+        """When progress bar is enabled, there should be some tracks in output."""
+        result = invoke_assert_code(
+            args=[
+                lint,
+                [
+                    "test/fixtures/linter/multiple_files",
+                ],
+            ],
+        )
+        raw_output = repr(result.output)
+
+        assert r"\rfile passing.1.sql:" in raw_output
+        assert r"\rfile passing.2.sql:" in raw_output
+        assert r"\rfile passing.3.sql:" in raw_output
+        assert r"\rlint by rules:" in raw_output
+        assert r"\rrule L001:" in raw_output
+        assert r"\rrule L049:" in raw_output
+
+    def test_cli_lint_disabled_progress_bar_when_verbose_mode(
+        self, mock_disable_progress_bar: MagicMock
+    ) -> None:
+        """Progressbar is disabled when verbose mode is set."""
+        result = invoke_assert_code(
+            ret_code=2,
+            args=[
+                lint,
+                [
+                    "-v" "test/fixtures/linter/passing.sql",
+                ],
+            ],
+        )
+        raw_output = repr(result.output)
+
+        assert r"\rparsing: 0it" not in raw_output
+        assert r"\rlint by rules:" not in raw_output
+        assert r"\rrule L001:" not in raw_output

@@ -1,10 +1,13 @@
 """Implementation of Rule L008."""
-from typing import Optional
+from typing import Optional, Tuple
 
 from sqlfluff.core.parser import WhitespaceSegment
 
 from sqlfluff.core.rules.base import BaseRule, LintResult, LintFix, RuleContext
 from sqlfluff.core.rules.doc_decorators import document_fix_compatible
+import sqlfluff.core.rules.functional.segment_predicates as sp
+
+from sqlfluff.core.parser.segments.base import BaseSegment
 
 
 @document_fix_compatible
@@ -34,45 +37,73 @@ class Rule_L008(BaseRule):
         WHERE a IN ('plop',•'zoo')
     """
 
-    def _eval(self, context: RuleContext) -> Optional[LintResult]:
-        """Commas should be followed by a single whitespace unless followed by a comment.
+    def _get_subsequent_whitespace(
+        self,
+        context,
+    ) -> Tuple[Optional[BaseSegment], Optional[BaseSegment]]:
+        """Search forwards through the raw segments for subsequent whitespace.
 
-        This is a slightly odd one, because we'll almost always evaluate from a point a few places
-        after the problem site. NB: We need at least two segments behind us for this to work.
+        Return a tuple of both the trailing whitespace segment and the
+        first non-whitespace segment discovered.
         """
-        if len(context.raw_stack) < 1:
+        # Get all raw segments. "raw_segments" is appropriate as the
+        # only segments we can care about are comma, whitespace,
+        # newline, and comment, which are all raw. Using the
+        # raw_segments allows us to account for possible unexpected
+        # parse tree structures resulting from other rule fixes.
+        raw_segments = context.functional.raw_segments
+        # Start after the current comma within the list. Get all the
+        # following whitespace.
+        following_segments = raw_segments.select(
+            loop_while=sp.or_(sp.is_meta(), sp.is_type("whitespace")),
+            start_seg=context.segment,
+        )
+        subsequent_whitespace = following_segments.last(sp.is_type("whitespace"))
+        try:
+            return (
+                subsequent_whitespace[0] if subsequent_whitespace else None,
+                raw_segments[
+                    raw_segments.index(context.segment) + len(following_segments) + 1
+                ],
+            )
+        except IndexError:
+            # If we find ourselves here it's all whitespace (or nothing) to the
+            # end of the file. This can only happen in bigquery (see
+            # test_pass_bigquery_trailing_comma).
+            return subsequent_whitespace, None
+
+    def _eval(self, context: RuleContext) -> Optional[LintResult]:
+        """Commas should be followed by a single whitespace unless followed by a comment."""
+        # We only care about commas.
+        if context.segment.name != "comma":
             return None
 
-        # Get the first element of this segment.
-        first_elem = context.segment.get_raw_segments()[0]
+        # Get subsequent whitespace segment and the first non-whitespace segment.
+        subsequent_whitespace, first_non_whitespace = self._get_subsequent_whitespace(
+            context
+        )
 
-        cm1 = context.raw_stack[-1]
-        if cm1.name == "comma":
-            # comma followed by something that isn't whitespace?
-            if first_elem.name not in ["whitespace", "newline", "Dedent"]:
-                self.logger.debug(
-                    "Comma followed by something other than whitespace: %s", first_elem
-                )
-                ins = WhitespaceSegment(raw=" ")
-                return LintResult(
-                    anchor=cm1,
-                    fixes=[LintFix("edit", context.segment, [ins, context.segment])],
-                )
+        if (
+            not subsequent_whitespace
+            and (first_non_whitespace is not None)
+            and (not first_non_whitespace.is_type("newline"))
+        ):
+            # No trailing whitespace and not followed by a newline,
+            # therefore create a whitespace after the comma.
+            return LintResult(
+                anchor=first_non_whitespace,
+                fixes=[LintFix.create_after(context.segment, [WhitespaceSegment()])],
+            )
+        elif (
+            subsequent_whitespace
+            and (subsequent_whitespace.raw != " ")
+            and (first_non_whitespace is not None)
+            and (not first_non_whitespace.is_comment)
+        ):
+            # Excess trailing whitespace therefore edit to only be one space long.
+            return LintResult(
+                anchor=subsequent_whitespace,
+                fixes=[LintFix.replace(subsequent_whitespace, [WhitespaceSegment()])],
+            )
 
-        if len(context.raw_stack) < 2:
-            return None
-
-        cm2 = context.raw_stack[-2]
-        if cm2.name == "comma":
-            # comma followed by too much whitespace?
-            if (
-                cm1.is_whitespace  # Must be whitespace
-                and cm1.raw != " "  # ...and not a single one
-                and cm1.name != "newline"  # ...and not a newline
-                and not first_elem.is_comment  # ...and not followed by a comment
-            ):
-                self.logger.debug("Comma followed by too much whitespace: %s", cm1)
-                repl = WhitespaceSegment(raw=" ")
-                return LintResult(anchor=cm1, fixes=[LintFix("edit", cm1, repl)])
-        # Otherwise we're fine
         return None

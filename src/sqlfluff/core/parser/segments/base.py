@@ -9,10 +9,13 @@ Here we define:
 """
 
 from io import StringIO
-from cached_property import cached_property
 from typing import Any, Callable, Optional, List, Tuple, NamedTuple, Iterator
 import logging
 
+from tqdm import tqdm
+
+from sqlfluff.core.cached_property import cached_property
+from sqlfluff.core.config import progress_bar_configuration
 from sqlfluff.core.string_helpers import (
     frame_msg,
     curtail_string,
@@ -152,7 +155,11 @@ class BaseSegment:
 
     def __hash__(self):
         return hash(
-            (self.__class__.__name__, self.raw, self.pos_marker.source_position())
+            (
+                self.__class__.__name__,
+                self.raw,
+                self.pos_marker.source_position() if self.pos_marker else None,
+            )
         )
 
     def __repr__(self):
@@ -268,11 +275,26 @@ class BaseSegment:
         """
         return ""
 
-    @staticmethod
-    def expand(segments, parse_context):
+    @classmethod
+    def expand(cls, segments, parse_context):
         """Expand the list of child segments using their `parse` methods."""
         segs = ()
-        for stmt in segments:
+
+        # Renders progress bar only for `BaseFileSegments`.
+        disable_progress_bar = (
+            not issubclass(cls, BaseFileSegment)
+            or progress_bar_configuration.disable_progress_bar
+        )
+
+        progressbar_segments = tqdm(
+            segments,
+            desc="parsing",
+            miniters=30,
+            leave=False,
+            disable=disable_progress_bar,
+        )
+
+        for stmt in progressbar_segments:
             try:
                 if not stmt.is_expandable:
                     parse_context.logger.info(
@@ -556,6 +578,14 @@ class BaseSegment:
         """Is this segment (or its parent) of the given type."""
         return self.class_is_type(*seg_type)
 
+    def get_name(self):
+        """Returns the name of this segment as a string."""
+        return self.name
+
+    def is_name(self, *seg_name):
+        """Is this segment of the given name."""
+        return any(s == self.name for s in seg_name)
+
     def invalidate_caches(self):
         """Invalidate the cached properties.
 
@@ -788,7 +818,11 @@ class BaseSegment:
                 return [self] + res
         return None  # pragma: no cover
 
-    def parse(self, parse_context=None, parse_grammar=None):
+    def parse(
+        self,
+        parse_context: ParseContext,
+        parse_grammar: Optional[Matchable] = None,
+    ) -> "BaseSegment":
         """Use the parse grammar to find subsegments within this segment.
 
         A large chunk of the logic around this can be found in the `expand` method.
@@ -800,9 +834,9 @@ class BaseSegment:
         provided which will override any existing parse grammar
         on the segment.
         """
-        # Clear the blacklist cache so avoid missteps
+        # Clear the denylist cache so avoid missteps
         if parse_context:
-            parse_context.blacklist.clear()
+            parse_context.denylist.clear()
 
         # the parse_depth and recurse kwargs control how deep we will recurse for testing.
         if not self.segments:  # pragma: no cover TODO?
@@ -906,7 +940,10 @@ class BaseSegment:
         if parse_context.may_recurse():
             parse_context.logger.debug(parse_depth_msg)
             with parse_context.deeper_parse() as ctx:
-                self.segments = self.expand(self.segments, parse_context=ctx)
+                self.segments = self.expand(
+                    self.segments,
+                    parse_context=ctx,
+                )
 
         return self
 
@@ -948,7 +985,15 @@ class BaseSegment:
                             if f.edit_type == "delete":
                                 # We're just getting rid of this segment.
                                 seg = None
-                            elif f.edit_type in ("edit", "create"):
+                            elif f.edit_type in (
+                                "replace",
+                                "create_before",
+                                "create_after",
+                            ):
+                                if f.edit_type == "create_after":
+                                    # in the case of a creation after, also add this segment before the edit.
+                                    seg_buffer.append(seg)
+
                                 # We're doing a replacement (it could be a single segment or an iterable)
                                 if isinstance(f.edit, BaseSegment):
                                     seg_buffer.append(f.edit)  # pragma: no cover TODO?
@@ -956,9 +1001,10 @@ class BaseSegment:
                                     for s in f.edit:
                                         seg_buffer.append(s)
 
-                                if f.edit_type == "create":
-                                    # in the case of a creation, also add this segment on the end
+                                if f.edit_type == "create_before":
+                                    # in the case of a creation before, also add this segment on the end
                                     seg_buffer.append(seg)
+
                             else:  # pragma: no cover
                                 raise ValueError(
                                     "Unexpected edit_type: {!r} in {!r}".format(

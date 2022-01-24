@@ -99,13 +99,14 @@ of the templaters.
 Variable Templating
 ^^^^^^^^^^^^^^^^^^^
 
-Variables are available in the *jinja* and *python* templaters. By default
-the templating engine will expect variables for templating to be available
-in the config, and the templater will be look in the section corresponding
-to the context for that templater. By convention, the config for the *jinja*
-templater is found in the *sqlfluff:templater:jinja:context* section and the
-config for the *python* templater is found in the
-*sqlfluff:templater:python:context* section.
+Variables are available in the *jinja*, *python* and *placeholder* templaters.
+By default the templating engine will expect variables for templating to be
+available in the config, and the templater will be look in the section
+corresponding to the context for that templater. By convention, the config for
+the *jinja* templater is found in the *sqlfluff:templater:jinja:context
+section, the config for the *python* templater is found in the
+*sqlfluff:templater:python:context* section, the one for the *placeholder*
+templater is found in the *sqlfluff:templater:placeholder:context* section
 
 For example, if passed the following *.sql* file:
 
@@ -133,6 +134,99 @@ For example, if passed the following *.sql* file:
     the current configuration context, then this will raise a `SQLTemplatingError`
     and this will appear as a violation without a line number, quoting
     the name of the variable that couldn't be found.
+
+Placeholder templating
+^^^^^^^^^^^^^^^^^^^^^^
+
+Libraries such as SQLAlchemy or Psycopg use different parameter placeholder
+styles to mark where a parameter has to be inserted in the query.
+
+For example a query in SQLAlchemy can look like this:
+
+.. code-block:: sql
+
+    SELECT * FROM table WHERE id = :myid
+
+At runtime `:myid` will be replace by a value provided by the application and
+escaped as needed, but this is not standard SQL and cannot be parsed as is.
+
+In order to parse these queries is then necessary to replace these
+placeholders with sample values, and this is done with the placeholder
+templater.
+
+Placeholder templating can be enabled in the config using:
+
+.. code-block:: cfg
+
+    [sqlfluff]
+    templater = placeholder
+
+A few common styles are supported:
+
+colon
+ WHERE bla = :my_name
+
+numeric_colon
+ WHERE bla = :2
+
+pyformat
+ WHERE bla = %(my_name)s
+
+dollar
+ WHERE bla = $my_name
+
+question_mark
+ WHERE bla = ?
+
+numeric_dollar
+ WHERE bla = $3
+
+percent
+ WHERE bla = %s
+
+ampersand
+ WHERE bla = &s or WHERE bla = &{s} or USE DATABASE MARKETING_{ENV}
+
+These can be configured by setting `param_style` to the names above:
+
+.. code-block:: cfg
+
+    [sqlfluff:templater:placeholder]
+    param_style=colon
+    my_name='john'
+
+then it is necessary to set sample values for each parameter, like `my_name`
+above. Notice that the value needs to be escaped as it will be replaced as a
+string during parsing.
+
+When parameters are positional, like `question_mark`, then their name is
+simply the order in which they appear, starting with `1`.
+
+.. code-block:: cfg
+
+    [sqlfluff:templater:placeholder]
+    param_style=question_mark
+    1='john'
+
+In case you need a parameter style different from the ones above, you can pass
+a custom regex.
+
+.. code-block:: cfg
+
+    [sqlfluff:templater:placeholder]
+    param_regex=__(?P<param_name>[\w_]+)__
+    my_name='john'
+
+N.B. quotes around `param_regex` in the config are
+interpreted literally by the templater.
+e.g. `param_regex='__(?P<param_name>[\w_]+)__'` matches
+`'__some_param__'` not `__some_param__`
+
+the named parameter `param_name` will be used as the key to replace, if
+missing, the parameter is assumed to be positional and numbers are used insead.
+
+Also consider making a pull request to the project to have your style added,
+it may be useful to other people and simplify your configuration.
 
 Complex Variable Templating
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -298,6 +392,37 @@ to use them for templated. In the above example, you might define a file at
         return "GROUP BY 1,2"
 
 
+If an `__init__.py` is detected, it will be loaded alongside any modules and
+submodules found within the library path.
+
+.. code-block:: jinja
+
+   SELECT
+      {{ custom_sum('foo', 'bar') }},
+      {{ foo.bar.another_sum('foo', 'bar') }}
+   FROM
+      baz
+
+`sqlfluff_libs/__init__.py`:
+
+.. code-block:: python
+
+    def custom_sum(a: str, b: str) -> str:
+        return a + b
+
+`sqlfluff_libs/foo/__init__.py`:
+
+.. code-block:: python
+
+    # empty file
+
+`sqlfluff_libs/foo/bar.py`:
+
+.. code-block:: python
+
+     def another_sum(a: str, b: str) -> str:
+        return a + b
+
 dbt Project Configuration
 -------------------------
 
@@ -333,10 +458,13 @@ Installation & Configuration
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 In order to get started using *SQLFluff* with a dbt project you will
-first need to install the :code:`sqlfluff-templater-dbt` package using
+first need to install the relevant `dbt adapter`_ for your dialect
+and the :code:`sqlfluff-templater-dbt` package using
 your package manager of choice (e.g.
-:code:`pip install sqlfluff-templater-dbt`) and then will need the
+:code:`pip install dbt-postgres sqlfluff-templater-dbt`) and then will need the
 following configuration:
+
+.. _`dbt adapter`: https://docs.getdbt.com/docs/available-adapters
 
 In *.sqlfluff*:
 
@@ -347,20 +475,31 @@ In *.sqlfluff*:
 
 In *.sqlfluffignore*:
 
-.. code-block::
+.. code-block:: text
 
     target/
+    # dbt <1.0.0
     dbt_modules/
+    # dbt >=1.0.0
+    dbt_packages/
     macros/
 
 You can set the dbt project directory, profiles directory and profile with:
 
-.. code-block::
+.. code-block:: cfg
 
     [sqlfluff:templater:dbt]
     project_dir = <relative or absolute path to dbt_project directory>
     profiles_dir = <relative or absolute path to the directory that contains the profiles.yml file>
     profile = <dbt profile>
+
+.. note::
+
+    If the `profiles_dir` setting is omitted, SQLFluff will look for the profile
+    in the default location, which varies by operating system. On Unix-like
+    operating systems (e.g. Linux or macOS), the default profile directory is
+    `~/.dbt/`. On Windows, you can determine your default profile directory by
+    running `dbt debug --config-dir`.
 
 Known Caveats
 ^^^^^^^^^^^^^
@@ -383,7 +522,7 @@ You already know you can pass arguments (:code:`--verbose`,
 :code:`--exclude-rules`, etc.) through the CLI commands (:code:`lint`,
 :code:`fix`, etc.):
 
-.. code-block:: console
+.. code-block:: text
 
     $ sqlfluff lint my_code.sql -v --exclude-rules L022,L027
 

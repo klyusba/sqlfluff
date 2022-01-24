@@ -3,7 +3,7 @@
 # computed by SQLFluff when running the tests. Please run
 # `python test/generate_parse_fixture_yml.py`  to generate them after adding or
 # altering SQL files.
-_hash: c779ff30a065b616a67966cb4168c174892973c083415a6b0168ace96a4dbdc0
+_hash: db2441deb5cc2f6fcd962d60c912405664f860820b0a0a73ecc27e6755ab16e5
 file:
 - statement:
     select_statement:
@@ -79,14 +79,16 @@ file:
         - keyword: PRIOR
         - column_reference:
             identifier: employee_id
-        - comparison_operator: '='
+        - comparison_operator:
+            raw_comparison_operator: '='
         - column_reference:
             identifier: manager_id
       - binary_operator: AND
       - expression:
         - column_reference:
             identifier: dept_no
-        - comparison_operator: '='
+        - comparison_operator:
+            raw_comparison_operator: '='
         - column_reference:
             identifier: dno
       - keyword: START
@@ -94,7 +96,8 @@ file:
       - expression:
           column_reference:
             identifier: last_name
-          comparison_operator: '='
+          comparison_operator:
+            raw_comparison_operator: '='
           literal: "'Clark'"
       orderby_clause:
       - keyword: ORDER
@@ -130,7 +133,7 @@ file:
             table_expression:
               table_reference:
                 identifier: sales
-      group_by_clause:
+      groupby_clause:
       - keyword: GROUP
       - keyword: BY
       - column_reference:
@@ -181,7 +184,7 @@ file:
               start_bracket: (
               identifier: c_id
               end_bracket: )
-      group_by_clause:
+      groupby_clause:
       - keyword: GROUP
       - keyword: BY
       - column_reference:
@@ -234,7 +237,8 @@ file:
                 - identifier: customers
                 - dot: .
                 - identifier: c_id
-              - comparison_operator: '='
+              - comparison_operator:
+                  raw_comparison_operator: '='
               - column_reference:
                 - identifier: sales
                 - dot: .
@@ -271,7 +275,7 @@ file:
               table_expression:
                 table_reference:
                   identifier: tmp_view
-        group_by_clause:
+        groupby_clause:
         - keyword: GROUP
         - keyword: BY
         - grouping_sets_clause:

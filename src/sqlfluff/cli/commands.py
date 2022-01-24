@@ -1,9 +1,11 @@
 """Contains the CLI."""
 
+from itertools import chain
 import sys
 import json
 import logging
 import time
+from logging import LogRecord
 from typing import (
     Callable,
     Tuple,
@@ -12,7 +14,7 @@ from typing import (
     List,
 )
 
-import oyaml as yaml
+import yaml
 
 import click
 
@@ -22,6 +24,8 @@ from io import StringIO
 
 # To enable colour cross platform
 import colorama
+from tqdm import tqdm
+from sqlfluff.cli.autocomplete import dialect_shell_complete
 
 from sqlfluff.cli.formatters import (
     format_rules,
@@ -46,9 +50,11 @@ from sqlfluff.core import (
     dialect_readout,
     TimingSummary,
 )
+from sqlfluff.core.config import progress_bar_configuration
 
 from sqlfluff.core.enums import FormatType, Color
 from sqlfluff.core.linter import ParsedString
+from sqlfluff.core.plugin.host import get_plugin_manager
 
 
 class RedWarningsFilter(logging.Filter):
@@ -59,6 +65,24 @@ class RedWarningsFilter(logging.Filter):
         if record.levelno >= logging.WARNING:
             record.msg = f"{colorize(record.msg, Color.red)} "
         return True
+
+
+class StreamHandlerTqdm(logging.StreamHandler):
+    """Modified StreamHandler which takes care of writing within `tqdm` context.
+
+    It uses `tqdm` write which takes care of conflicting prints with progressbar.
+    Without it, there were left artifacts in DEBUG mode (not sure about another ones,
+    but probably would happen somewhere).
+    """
+
+    def emit(self, record: LogRecord) -> None:
+        """Behaves like original one except uses `tqdm` to write."""
+        try:
+            msg = self.format(record)
+            tqdm.write(msg, file=self.stream)
+            self.flush()
+        except Exception:  # pragma: no cover
+            self.handleError(record)
 
 
 def set_logging_level(
@@ -83,8 +107,9 @@ def set_logging_level(
     # Enable colorama
     colorama.init()
 
-    # Set up the log handler to log to stdout
-    handler = logging.StreamHandler(stream=sys.stderr if stderr_output else sys.stdout)
+    # Set up the log handler which is able to print messages without overlapping
+    # with progressbars.
+    handler = StreamHandlerTqdm(stream=sys.stderr if stderr_output else sys.stdout)
     # NB: the unicode character at the beginning is to squash any badly
     # tamed ANSI colour statements, and return us to normality.
     handler.setFormatter(logging.Formatter("\u001b[0m%(levelname)-10s %(message)s"))
@@ -147,15 +172,27 @@ def core_options(f: Callable) -> Callable:
     `parse`, `lint` and `fix`.
     """
     f = click.option(
-        "--dialect", default=None, help="The dialect of SQL to lint (default=ansi)"
+        "--dialect",
+        default=None,
+        help="The dialect of SQL to lint (default=ansi)",
+        shell_complete=dialect_shell_complete,
     )(f)
     f = click.option(
-        "--templater", default=None, help="The templater to use (default=jinja)"
+        "--templater",
+        default=None,
+        help="The templater to use (default=jinja)",
+        type=click.Choice(
+            [
+                templater.name
+                for templater in chain.from_iterable(
+                    get_plugin_manager().hook.get_templaters()
+                )
+            ]
+        ),
     )(f)
     f = click.option(
         "--rules",
         default=None,
-        # short_help='Specify a particular rule, or comma separated rules, to check',
         help=(
             "Narrow the search to only specific rules. For example "
             "specifying `--rules L001` will only search for rule `L001` (Unnecessary "
@@ -167,15 +204,43 @@ def core_options(f: Callable) -> Callable:
     f = click.option(
         "--exclude-rules",
         default=None,
-        # short_help='Specify a particular rule, or comma separated rules to exclude',
         help=(
             "Exclude specific rules. For example "
             "specifying `--exclude-rules L001` will remove rule `L001` (Unnecessary "
             "trailing whitespace) from the set of considered rules. This could either "
-            "be the whitelist, or the general set if there is no specific whitelist. "
+            "be the allowlist, or the general set if there is no specific allowlist. "
             "Multiple rules can be specified with commas e.g. "
             "`--exclude-rules L001,L002` will exclude violations of rule "
             "`L001` and rule `L002`."
+        ),
+    )(f)
+    f = click.option(
+        "--config",
+        "extra_config_path",
+        default=None,
+        help=(
+            "Include additional config file. By default the config is generated "
+            "from the standard configuration files described in the documentation. This "
+            "argument allows you to specify an additional configuration file that overrides "
+            "the standard configuration files. N.B. cfg format is required."
+        ),
+        type=click.Path(),
+    )(f)
+    f = click.option(
+        "--ignore-local-config",
+        is_flag=True,
+        help=(
+            "Ignore config files in default search path locations. "
+            "This option allows the user to lint with the default config "
+            "or can be used in conjunction with --config to only "
+            "reference the custom config file."
+        ),
+    )(f)
+    f = click.option(
+        "--encoding",
+        default="autodetect",
+        help=(
+            "Specifiy encoding to use when reading and writing files. Defaults to autodetect."
         ),
     )(f)
     f = click.option(
@@ -200,10 +265,20 @@ def core_options(f: Callable) -> Callable:
         ),
         help="Choose to limit the logging to one of the loggers.",
     )(f)
+    f = click.option(
+        "--disable-noqa",
+        is_flag=True,
+        default=None,
+        help="Set this flag to ignore inline noqa comments.",
+    )(f)
     return f
 
 
-def get_config(**kwargs) -> FluffConfig:
+def get_config(
+    extra_config_path: Optional[str] = None,
+    ignore_local_config: bool = False,
+    **kwargs,
+) -> FluffConfig:
     """Get a config object from kwargs."""
     if "dialect" in kwargs:
         try:
@@ -227,7 +302,11 @@ def get_config(**kwargs) -> FluffConfig:
     # Instantiate a config object (filtering out the nulls)
     overrides = {k: kwargs[k] for k in kwargs if kwargs[k] is not None}
     try:
-        return FluffConfig.from_root(overrides=overrides)
+        return FluffConfig.from_root(
+            extra_config_path=extra_config_path,
+            ignore_local_config=ignore_local_config,
+            overrides=overrides,
+        )
     except SQLFluffUserError as err:  # pragma: no cover
         click.echo(
             colorize(
@@ -236,6 +315,25 @@ def get_config(**kwargs) -> FluffConfig:
             )
         )
         sys.exit(66)
+
+
+def _callback_handler(cfg: FluffConfig) -> Callable:
+    """Returns function which will be bound as a callback for printing passed message.
+
+    Called in `get_linter_and_formatter`.
+    """
+
+    def _echo_with_tqdm_lock(message: str) -> None:
+        """Makes sure that message printing (echoing) will be not in conflict with tqdm.
+
+        It may happen that progressbar conflicts with extra printing. Nothing very
+        serious happens then, except that there is printed (not removed) progressbar
+        line. The `external_write_mode` allows to disable tqdm for writing time.
+        """
+        with tqdm.external_write_mode():
+            click.echo(message=message, color=cfg.get("color"))
+
+    return _echo_with_tqdm_lock
 
 
 def get_linter_and_formatter(
@@ -250,9 +348,9 @@ def get_linter_and_formatter(
         sys.exit(66)
 
     if not silent:
-        # Instantiate the linter and return (with an output function)
+        # Instantiate the linter and return it (with an output function)
         formatter = CallbackFormatter(
-            callback=lambda m: click.echo(m, color=cfg.get("color")),
+            callback=_callback_handler(cfg=cfg),
             verbosity=cfg.get("verbose"),
             output_line_length=cfg.get("output_line_length"),
         )
@@ -264,7 +362,7 @@ def get_linter_and_formatter(
         return Linter(config=cfg), formatter
 
 
-@click.group()
+@click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option()
 def cli():
     """Sqlfluff is a modular sql linter for humans."""
@@ -339,7 +437,12 @@ def dialects(**kwargs) -> None:
     default=1,
     help="The number of parallel processes to run.",
 )
-@click.argument("paths", nargs=-1)
+@click.option(
+    "--disable_progress_bar",
+    is_flag=True,
+    help="Disables progress bars.",
+)
+@click.argument("paths", nargs=-1, type=click.Path(allow_dash=True))
 def lint(
     paths: Tuple[str],
     processes: int,
@@ -349,6 +452,9 @@ def lint(
     disregard_sqlfluffignores: bool,
     logger: Optional[logging.Logger] = None,
     bench: bool = False,
+    disable_progress_bar: Optional[bool] = False,
+    extra_config_path: Optional[str] = None,
+    ignore_local_config: bool = False,
     **kwargs,
 ) -> NoReturn:
     """Lint SQL files via passing a list of files or using stdin.
@@ -369,10 +475,12 @@ def lint(
         echo 'select col from tbl' | sqlfluff lint -
 
     """
-    config = get_config(**kwargs)
+    config = get_config(extra_config_path, ignore_local_config, **kwargs)
     non_human_output = format != FormatType.human.value
     lnt, formatter = get_linter_and_formatter(config, silent=non_human_output)
+
     verbose = config.get("verbose")
+    progress_bar_configuration.disable_progress_bar = disable_progress_bar
 
     formatter.dispatch_config(lnt)
 
@@ -407,7 +515,7 @@ def lint(
     if format == FormatType.json.value:
         click.echo(json.dumps(result.as_records()))
     elif format == FormatType.yaml.value:
-        click.echo(yaml.dump(result.as_records()))
+        click.echo(yaml.dump(result.as_records(), sort_keys=False))
     elif format == FormatType.github_annotation.value:
         github_result = []
         for record in result.as_records():
@@ -485,7 +593,12 @@ def do_fixes(lnt, result, formatter=None, **kwargs):
     default=1,
     help="The number of parallel processes to run.",
 )
-@click.argument("paths", nargs=-1)
+@click.option(
+    "--disable_progress_bar",
+    is_flag=True,
+    help="Disables progress bars.",
+)
+@click.argument("paths", nargs=-1, type=click.Path(allow_dash=True))
 def fix(
     force: bool,
     paths: Tuple[str],
@@ -493,6 +606,9 @@ def fix(
     bench: bool = False,
     fixed_suffix: str = "",
     logger: Optional[logging.Logger] = None,
+    disable_progress_bar: Optional[bool] = False,
+    extra_config_path: Optional[str] = None,
+    ignore_local_config: bool = False,
     **kwargs,
 ) -> NoReturn:
     """Fix SQL files.
@@ -505,9 +621,12 @@ def fix(
     # some quick checks
     fixing_stdin = ("-",) == paths
 
-    config = get_config(**kwargs)
+    config = get_config(extra_config_path, ignore_local_config, **kwargs)
     lnt, formatter = get_linter_and_formatter(config, silent=fixing_stdin)
+
     verbose = config.get("verbose")
+    progress_bar_configuration.disable_progress_bar = disable_progress_bar
+
     exit_code = 0
 
     formatter.dispatch_config(lnt)
@@ -553,7 +672,10 @@ def fix(
     click.echo("==== finding fixable violations ====")
     try:
         result = lnt.lint_paths(
-            paths, fix=True, ignore_non_existent_files=False, processes=processes
+            paths,
+            fix=True,
+            ignore_non_existent_files=False,
+            processes=processes,
         )
     except OSError:
         click.echo(
@@ -653,7 +775,7 @@ def quoted_presenter(dumper, data):
 @cli.command()
 @common_options
 @core_options
-@click.argument("path", nargs=1)
+@click.argument("path", nargs=1, type=click.Path(allow_dash=True))
 @click.option(
     "--recurse", default=0, help="The depth to recursively parse to (0 for unlimited)"
 )
@@ -706,6 +828,8 @@ def parse(
     bench: bool,
     nofail: bool,
     logger: Optional[logging.Logger] = None,
+    extra_config_path: Optional[str] = None,
+    ignore_local_config: bool = False,
     **kwargs,
 ) -> NoReturn:
     """Parse SQL files and just spit out the result.
@@ -715,12 +839,14 @@ def parse(
     character to indicate reading from *stdin* or a dot/blank ('.'/' ') which will
     be interpreted like passing the current working directory as a path argument.
     """
-    c = get_config(**kwargs)
+    c = get_config(extra_config_path, ignore_local_config, **kwargs)
     # We don't want anything else to be logged if we want json or yaml output
     non_human_output = format in (FormatType.json.value, FormatType.yaml.value)
     lnt, formatter = get_linter_and_formatter(c, silent=non_human_output)
     verbose = c.get("verbose")
     recurse = c.get("recurse")
+
+    progress_bar_configuration.disable_progress_bar = True
 
     formatter.dispatch_config(lnt)
 
@@ -746,7 +872,10 @@ def parse(
         if "-" == path:
             parsed_strings = [
                 lnt.parse_string(
-                    sys.stdin.read(), "stdin", recurse=recurse, config=lnt.config
+                    sys.stdin.read(),
+                    "stdin",
+                    recurse=recurse,
+                    config=lnt.config,
                 ),
             ]
         else:
@@ -777,7 +906,7 @@ def parse(
             if format == FormatType.yaml.value:
                 # For yaml dumping always dump double quoted strings if they contain tabs or newlines.
                 yaml.add_representer(str, quoted_presenter)
-                click.echo(yaml.dump(parsed_strings_dict))
+                click.echo(yaml.dump(parsed_strings_dict, sort_keys=False))
             elif format == FormatType.json.value:
                 click.echo(json.dumps(parsed_strings_dict))
 
