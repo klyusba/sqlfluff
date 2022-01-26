@@ -20,17 +20,22 @@ vertica_dialect.sets("reserved_keywords").update(reserved_keywords.splitlines())
 vertica_dialect.sets("bare_functions").add('SYSDATE')
 
 
-vertica_dialect.insert_lexer_matchers(
-    [StringLexer("equal_nullsafe", "<=>", CodeSegment), ],
-    before="greater_than_or_equal"
-)
-
-
 vertica_dialect.add(
     EqualsNullsafeSegment=StringParser(
         "<=>", SymbolSegment, name="equals_nullsafe", type="comparison_operator"
     ),
 )
+
+
+@vertica_dialect.segment
+class EqualsNullsafeToSegment(BaseSegment):
+    """Nullsafe Equals to operator."""
+
+    type = "comparison_operator"
+    name = "nullsafe_equal_to"
+    match_grammar = Sequence(
+        Ref("RawLessThanSegment"), Ref("RawEqualsSegment"), Ref("RawGreaterThanSegment"), allow_gaps=False
+    )
 
 
 vertica_dialect.replace(
@@ -61,8 +66,7 @@ vertica_dialect.replace(
         Ref("LessThanSegment"),
         Ref("GreaterThanOrEqualToSegment"),
         Ref("LessThanOrEqualToSegment"),
-        Ref("NotEqualToSegment_a"),
-        Ref("NotEqualToSegment_b"),
+        Ref("NotEqualToSegment"),
         Ref("LikeOperatorSegment"),
         Ref("EqualsNullsafeSegment"),
     ),
@@ -82,7 +86,9 @@ class StatementSegment(BaseSegment):
         Ref("SelectableGrammar"),
         Ref("InsertStatementSegment"),
         Ref("TransactionStatementSegment"),
-        Ref("DropStatementSegment"),
+        Ref("DropTableStatementSegment"),
+        Ref("DropViewStatementSegment"),
+        Ref("DropUserStatementSegment"),
         Ref("TruncateStatementSegment"),
         Ref("AccessStatementSegment"),
         Ref("CreateTableStatementSegment"),
@@ -92,7 +98,6 @@ class StatementSegment(BaseSegment):
         Ref("CreateSchemaStatementSegment"),
         Ref("SetSchemaStatementSegment"),
         Ref("DropSchemaStatementSegment"),
-        Ref("CreateDatabaseStatementSegment"),
         Ref("CreateExtensionStatementSegment"),
         Ref("CreateIndexStatementSegment"),
         Ref("DropIndexStatementSegment"),
