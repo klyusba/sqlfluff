@@ -2,8 +2,8 @@
 https://www.vertica.com/docs/11.0.x/HTML/Content/Authoring/ConceptsGuide/Other/SQLOverview.htm
 """
 
-from sqlfluff.core.parser import (OneOf, BaseSegment, Sequence, Indent, Ref, Bracketed, Dedent, StringParser,
-                                  StringLexer, SymbolSegment, CodeSegment, GreedyUntil, StartsWith, Delimited,
+from sqlfluff.core.parser import (OneOf, BaseSegment, Sequence, Indent, Ref, Bracketed, Dedent,
+                                  GreedyUntil, StartsWith, Delimited,
                                   OptionallyBracketed, Conditional, AnyNumberOf)
 
 from sqlfluff.core.dialects import load_raw_dialect
@@ -20,21 +20,14 @@ vertica_dialect.sets("reserved_keywords").update(reserved_keywords.splitlines())
 vertica_dialect.sets("bare_functions").add('SYSDATE')
 
 
-vertica_dialect.add(
-    EqualsNullsafeSegment=StringParser(
-        "<=>", SymbolSegment, name="equals_nullsafe", type="comparison_operator"
-    ),
-)
-
-
-@vertica_dialect.segment
-class EqualsNullsafeToSegment(BaseSegment):
+@vertica_dialect.segment()
+class EqualsNullsafeSegment(BaseSegment):
     """Nullsafe Equals to operator."""
 
     type = "comparison_operator"
-    name = "nullsafe_equal_to"
     match_grammar = Sequence(
-        Ref("RawLessThanSegment"), Ref("RawEqualsSegment"), Ref("RawGreaterThanSegment"), allow_gaps=False
+        Ref("RawLessThanSegment"), Ref("RawEqualsSegment"), Ref("RawGreaterThanSegment"),
+        allow_gaps=False
     )
 
 
@@ -71,7 +64,7 @@ vertica_dialect.replace(
         Ref("EqualsNullsafeSegment"),
     ),
     # RLIKE removed, LIKEB and ILIKEB added
-    LikeGrammar=OneOf("LIKE", "ILIKE", "LIKEB", "ILIKEB")
+    LikeGrammar=OneOf("LIKE", "ILIKE", "LIKEB", "ILIKEB"),
 )
 
 
@@ -263,3 +256,132 @@ class LimitClauseSegment(BaseSegment):
         Dedent,
     )
 
+
+@vertica_dialect.segment(replace=True)
+class InsertStatementSegment(BaseSegment):
+    """An `INSERT` statement."""
+
+    type = "insert_statement"
+    match_grammar = StartsWith("INSERT")
+    parse_grammar = Sequence(
+        "INSERT",
+        "INTO",
+        Ref("TableReferenceSegment"),
+        Ref("BracketedColumnReferenceListGrammar", optional=True),
+        Ref("SelectableGrammar"),
+    )
+
+
+@vertica_dialect.segment(replace=True)
+class WindowSpecificationSegment(BaseSegment):
+    """Window specification within OVER(...)."""
+
+    type = "window_specification"
+    match_grammar = Sequence(
+        OneOf(
+            Ref("SingleIdentifierGrammar", optional=True),  # "Base" window name
+            Sequence(
+                Ref("SingleIdentifierGrammar", optional=True),  # "Base" window name
+                Ref("OrderByClauseSegment", optional=True),
+            ),
+            Sequence(
+                Ref("PartitionClauseSegment", optional=True),
+                Ref("OrderByClauseSegment", optional=True),
+            ),
+        ),
+        Ref("FrameClauseSegment", optional=True),
+        optional=True,
+        ephemeral_name="OverClauseContent",
+    )
+
+
+@vertica_dialect.segment(replace=True)
+class ArrayLiteralSegment(BaseSegment):
+    """An array literal segment."""
+
+    type = "array_literal"
+    match_grammar = Sequence(
+        "ARRAY",
+        Bracketed(
+            Delimited(Ref("ExpressionSegment"), optional=True),
+            bracket_type="square",
+        ),
+    )
+
+
+@vertica_dialect.segment()
+class SetLiteralSegment(BaseSegment):
+    """An set literal segment."""
+
+    type = "set_literal"
+    match_grammar = Sequence(
+        "SET",
+        Bracketed(
+            Delimited(Ref("ExpressionSegment"), optional=True),
+            bracket_type="square",
+        ),
+    )
+
+
+@vertica_dialect.segment(replace=True)
+class DatatypeSegment(BaseSegment):
+    """A data type segment.
+
+    Supports timestamp with(out) time zone. Doesn't currently support intervals.
+    """
+
+    type = "data_type"
+    match_grammar = OneOf(
+        # TODO VARCHAR, NUMERIC
+        "INT",
+        "INTEGER",
+        "FLOAT",
+        Sequence(
+            OneOf("time", "timestamp"),
+            Bracketed(Ref("NumericLiteralSegment"), optional=True),
+            Sequence(OneOf("WITH", "WITHOUT"), "TIME", "ZONE", optional=True),
+        ),
+        Sequence(
+            "DOUBLE",
+            "PRECISION",
+        ),
+        Sequence(
+            OneOf(
+                Sequence(
+                    OneOf("CHARACTER", "BINARY"),
+                    OneOf("VARYING", Sequence("LARGE", "OBJECT")),
+                ),
+                Sequence(
+                    # Some dialects allow optional qualification of data types with schemas
+                    Sequence(
+                        Ref("SingleIdentifierGrammar"),
+                        Ref("DotSegment"),
+                        allow_gaps=False,
+                        optional=True,
+                    ),
+                    Ref("DatatypeIdentifierSegment"),
+                    allow_gaps=False,
+                ),
+            ),
+            Bracketed(
+                OneOf(
+                    Delimited(Ref("ExpressionSegment")),
+                    # The brackets might be empty for some cases...
+                    optional=True,
+                ),
+                # There may be no brackets for some data types
+                optional=True,
+            ),
+            Ref("CharCharacterSetSegment", optional=True),
+        ),
+    )
+
+
+vertica_dialect.get_segment("FromClauseSegment").parse_grammar = Sequence(
+        "FROM",
+        OptionallyBracketed(
+            Delimited(
+                Ref("FromExpressionSegment"),
+            ),
+        )
+    )
