@@ -651,4 +651,6 @@ ZSTD_HIGH_COMP"""
 unreserved_keywords += """
 SEPARATOR
 DATE
-DATEADD"""
+DATEADD
+RESPECT
+NAN"""
