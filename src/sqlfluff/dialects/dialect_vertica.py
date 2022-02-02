@@ -4,7 +4,8 @@ https://www.vertica.com/docs/11.0.x/HTML/Content/Authoring/ConceptsGuide/Other/S
 
 from sqlfluff.core.parser import (OneOf, BaseSegment, Sequence, Indent, Ref, Bracketed, Dedent,
                                   GreedyUntil, StartsWith, Delimited,
-                                  OptionallyBracketed, Conditional, AnyNumberOf)
+                                  OptionallyBracketed, Conditional, AnyNumberOf, StringLexer, CodeSegment,
+                                  StringParser, SymbolSegment)
 
 from sqlfluff.core.dialects import load_raw_dialect
 from sqlfluff.dialects.dialect_vertica_keywords import reserved_keywords, unreserved_keywords
@@ -31,27 +32,13 @@ class EqualsNullsafeSegment(BaseSegment):
     )
 
 
+vertica_dialect.insert_lexer_matchers(
+    [StringLexer("safe_casting_operator", "::!", CodeSegment), ],
+    before='casting_operator'
+)
+
+
 vertica_dialect.replace(
-    # qualify removed
-    FromClauseTerminatorGrammar=OneOf(
-        "WHERE",
-        "LIMIT",
-        Sequence("GROUP", "BY"),
-        Sequence("ORDER", "BY"),
-        "HAVING",
-        "WINDOW",
-        Ref("SetOperatorSegment"),
-        Ref("WithNoSchemaBindingClauseSegment"),
-    ),
-    # qualify removed
-    WhereClauseTerminatorGrammar=OneOf(
-        "LIMIT",
-        Sequence("GROUP", "BY"),
-        Sequence("ORDER", "BY"),
-        "HAVING",
-        "WINDOW",
-        "OVERLAPS",
-    ),
     # <=> added
     ComparisonOperatorGrammar=OneOf(
         Ref("EqualsSegment"),
@@ -69,6 +56,46 @@ vertica_dialect.replace(
 
 
 @vertica_dialect.segment(replace=True)
+class CastOperatorSegment(BaseSegment):
+    type = "casting_operator"
+    match_grammar = OneOf(
+        StringParser(
+            "::", SymbolSegment, name="casting_operator", type="casting_operator"
+        ),
+        StringParser(
+            "::!", SymbolSegment, name="safe_casting_operator", type="safe_casting_operator"
+        )
+    )
+
+
+@vertica_dialect.segment(replace=True)
+class IntervalExpressionSegment(BaseSegment):
+    """An interval expression segment.
+
+    INTERVAL 'interval-literal' [ interval-qualifier ] [ (p) ]
+    """
+
+    type = "interval_expression"
+    match_grammar = Sequence(
+        "INTERVAL",
+        Ref("QuotedLiteralSegment"),
+        AnyNumberOf(
+            Ref("DatetimeUnitSegment"),
+            Sequence(
+                Ref("DatetimeUnitSegment"),
+                "TO",
+                Ref("DatetimeUnitSegment"),
+                Bracketed(
+                    Ref("NumericLiteralSegment"),
+                    optional=True
+                )
+            ),
+            max_times=1,
+        )
+    )
+
+
+@vertica_dialect.segment(replace=True)
 class StatementSegment(BaseSegment):
     """A generic segment, to any of its child subsegments."""
 
@@ -78,6 +105,7 @@ class StatementSegment(BaseSegment):
     parse_grammar = OneOf(
         Ref("SelectableGrammar"),
         Ref("InsertStatementSegment"),
+        Ref("MergeStatementSegment"),
         Ref("TransactionStatementSegment"),
         Ref("DropTableStatementSegment"),
         Ref("DropViewStatementSegment"),
@@ -136,93 +164,6 @@ class FromExpressionSegment(BaseSegment):
 
 
 @vertica_dialect.segment(replace=True)
-class OrderByClauseSegment(BaseSegment):
-    """A `ORDER BY` clause like in `SELECT`."""
-
-    type = "orderby_clause"
-    match_grammar = StartsWith(
-        Sequence("ORDER", "BY"),
-        terminator=OneOf(
-            "LIMIT",
-            "HAVING",
-            # For window functions
-            "WINDOW",
-            Ref("FrameClauseUnitGrammar"),
-            "SEPARATOR",
-        ),
-    )
-    parse_grammar = Sequence(
-        "ORDER",
-        "BY",
-        Indent,
-        Delimited(
-            Sequence(
-                OneOf(
-                    Ref("ColumnReferenceSegment"),
-                    # Can `ORDER BY 1`
-                    Ref("NumericLiteralSegment"),
-                    # Can order by an expression
-                    Ref("ExpressionSegment"),
-                ),
-                OneOf("ASC", "DESC", optional=True),
-                # NB: This isn't really ANSI, and isn't supported in Mysql, but
-                # is supported in enough other dialects for it to make sense here
-                # for now.
-                Sequence("NULLS", OneOf("FIRST", "LAST"), optional=True),
-            ),
-            terminator=OneOf(Ref.keyword("LIMIT"), Ref("FrameClauseUnitGrammar")),
-        ),
-        Dedent,
-    )
-
-
-@vertica_dialect.segment(replace=True)
-class GroupByClauseSegment(BaseSegment):
-    """A `GROUP BY` clause like in `SELECT`."""
-
-    type = "groupby_clause"
-    match_grammar = StartsWith(
-        Sequence("GROUP", "BY"),
-        terminator=OneOf("ORDER", "LIMIT", "HAVING", "WINDOW"),
-        enforce_whitespace_preceding_terminator=True,
-    )
-    parse_grammar = Sequence(
-        "GROUP",
-        "BY",
-        Indent,
-        Delimited(
-            OneOf(
-                Ref("ColumnReferenceSegment"),
-                # Can `GROUP BY 1`
-                Ref("NumericLiteralSegment"),
-                # Can `GROUP BY coalesce(col, 1)`
-                Ref("ExpressionSegment"),
-            ),
-            terminator=OneOf("ORDER", "LIMIT", "HAVING", "WINDOW"),
-        ),
-        Dedent,
-    )
-
-
-@vertica_dialect.segment(replace=True)
-class HavingClauseSegment(BaseSegment):
-    """A `HAVING` clause like in `SELECT`."""
-
-    type = "having_clause"
-    match_grammar = StartsWith(
-        "HAVING",
-        terminator=OneOf("ORDER", "LIMIT", "WINDOW"),
-        enforce_whitespace_preceding_terminator=True,
-    )
-    parse_grammar = Sequence(
-        "HAVING",
-        Indent,
-        OptionallyBracketed(Ref("ExpressionSegment")),
-        Dedent,
-    )
-
-
-@vertica_dialect.segment(replace=True)
 class LimitClauseSegment(BaseSegment):
     """A `LIMIT` clause like in `SELECT`."""
 
@@ -258,6 +199,36 @@ class LimitClauseSegment(BaseSegment):
 
 
 @vertica_dialect.segment(replace=True)
+class PartitionClauseSegment(BaseSegment):
+    """A `PARTITION BY` for window functions."""
+
+    type = "partitionby_clause"
+    match_grammar = StartsWith(
+        "PARTITION",
+        terminator=OneOf("ORDER", Ref("FrameClauseUnitGrammar")),
+        enforce_whitespace_preceding_terminator=True,
+    )
+    parse_grammar = OneOf(
+        Sequence(
+            "PARTITION",
+            "BY",
+            Indent,
+            # Brackets are optional in a partition by statement
+            OptionallyBracketed(Delimited(Ref("ExpressionSegment"))),
+            Dedent,
+        ),
+        Sequence(
+            "PARTITION",
+            "BEST",
+        ),
+        Sequence(
+            "PARTITION",
+            "NODES",
+        )
+    )
+
+
+@vertica_dialect.segment(replace=True)
 class InsertStatementSegment(BaseSegment):
     """An `INSERT` statement."""
 
@@ -268,30 +239,105 @@ class InsertStatementSegment(BaseSegment):
         "INTO",
         Ref("TableReferenceSegment"),
         Ref("BracketedColumnReferenceListGrammar", optional=True),
-        Ref("SelectableGrammar"),
+        OptionallyBracketed(Ref("SelectableGrammar")),
     )
 
 
-@vertica_dialect.segment(replace=True)
-class WindowSpecificationSegment(BaseSegment):
-    """Window specification within OVER(...)."""
+@vertica_dialect.segment()
+class MergeStatementSegment(BaseSegment):
+    """An `MERGE` statement."""
 
-    type = "window_specification"
-    match_grammar = Sequence(
+    type = "merge_statement"
+    match_grammar = StartsWith("MERGE")
+    parse_grammar = Sequence(
+        "MERGE",
+        "INTO",
+        Ref("TableReferenceSegment"),
+        Ref("AliasExpressionSegment", optional=True),
+        "USING",
         OneOf(
-            Ref("SingleIdentifierGrammar", optional=True),  # "Base" window name
             Sequence(
-                Ref("SingleIdentifierGrammar", optional=True),  # "Base" window name
-                Ref("OrderByClauseSegment", optional=True),
+                Ref("TableReferenceSegment"),
+                Ref("AliasExpressionSegment", optional=True),
             ),
             Sequence(
-                Ref("PartitionClauseSegment", optional=True),
-                Ref("OrderByClauseSegment", optional=True),
+                Bracketed(
+                    Ref("SelectableGrammar")
+                ),
+                Ref("SingleIdentifierGrammar")
+            )
+        ),
+        Ref("JoinOnConditionSegment"),
+        AnyNumberOf(
+            Ref("MergeMatchedClauseSegment"),
+            Ref("MergeNotMatchedClauseSegment"),
+            min_times=1,
+        ),
+    )
+
+
+@vertica_dialect.segment()
+class MergeMatchedClauseSegment(BaseSegment):
+    """The `WHEN MATCHED` clause within a `MERGE` statement."""
+
+    type = "merge_when_matched_clause"
+
+    match_grammar = Sequence(
+        "WHEN",
+        "MATCHED",
+        Sequence(
+            "AND",
+            Ref("ExpressionSegment"),
+            optional=True,
+        ),
+        Indent,
+        "THEN",
+        "UPDATE",
+        Ref("SetClauseListSegment"),
+        Dedent,
+    )
+    # TODO Vertica also supports Oracle syntax for specifying update filters
+
+
+@vertica_dialect.segment()
+class MergeNotMatchedClauseSegment(BaseSegment):
+    """The `WHEN NOT MATCHED` clause within a `MERGE` statement."""
+
+    type = "merge_when_not_matched_clause"
+
+    match_grammar = Sequence(
+        "WHEN",
+        "NOT",
+        "MATCHED",
+        Sequence("AND", Ref("ExpressionSegment"), optional=True),
+        Indent,
+        "THEN",
+        Ref("MergeInsertClauseSegment"),
+        Dedent,
+    )
+    # TODO Vertica also supports Oracle syntax for specifying update filters
+
+
+@vertica_dialect.segment()
+class MergeInsertClauseSegment(BaseSegment):
+    """`INSERT` clause within the `MERGE` statement."""
+
+    type = "merge_insert_clause"
+    match_grammar = Sequence(
+        "INSERT",
+        Indent,
+        Ref("BracketedColumnReferenceListGrammar", optional=True),
+        Dedent,
+        "VALUES",
+        Indent,
+        Bracketed(
+            Delimited(
+                AnyNumberOf(
+                    Ref("ExpressionSegment"),
+                ),
             ),
         ),
-        Ref("FrameClauseSegment", optional=True),
-        optional=True,
-        ephemeral_name="OverClauseContent",
+        Dedent,
     )
 
 
@@ -385,3 +431,42 @@ vertica_dialect.get_segment("FromClauseSegment").parse_grammar = Sequence(
             ),
         )
     )
+
+
+vertica_dialect.replace(
+    FunctionContentsGrammar=ansi_dialect.get_grammar("FunctionContentsGrammar").copy(
+        insert=[
+            Sequence(
+                "USING",
+                "PARAMETERS",
+                Delimited(
+                    Sequence(
+                        Ref("SingleIdentifierGrammar"),
+                        Ref("RawEqualsSegment"),
+                        Ref("LiteralGrammar"),
+                    )
+                )
+            ),
+            Sequence(  # TRIM function
+                OneOf(
+                    "BOTH",
+                    "LEADING",
+                    "TRAILING",
+                ),
+                Sequence(
+                    Ref("LiteralGrammar"),
+                    "FROM",
+                    optional=True
+                ),
+                Ref("SingleIdentifierGrammar")
+            ),
+            Sequence(  # SUBSTRING function
+                "USING",
+                OneOf(
+                    "CHARACTERS",
+                    "OCTETS"
+                )
+            ),
+        ]
+    )
+)
